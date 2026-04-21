@@ -43,7 +43,7 @@ async def create_ride_request(
         dropoff_location=payload.dropoff_location,
         status=RideStatus.searching.value,
         estimated_arrival=estimated_arrival,
-        tracking_note="Looking for nearby riders...",
+        tracking_note=payload.delivery_note or f"Receiver: {payload.receiver_name or 'Customer'}. Looking for nearby riders...",
     )
     
     db_session.add(ride)

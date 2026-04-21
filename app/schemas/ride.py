@@ -9,6 +9,10 @@ class RideRequestSchema(BaseModel):
     price: float
     pickup_location: str
     dropoff_location: str
+    phone_number: Optional[str] = None
+    receiver_name: Optional[str] = None
+    receiver_phone: Optional[str] = None
+    delivery_note: Optional[str] = None
 
 
 class RideStatusResponse(BaseModel):

@@ -43,6 +43,24 @@ async def request_ride(
     )
 
 
+@router.post("", response_model=RideResponse)
+async def request_ride_alias(
+    payload: RideRequestSchema,
+    current_user: User = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db),
+):
+    ride = await create_ride_request(current_user.id, payload, db_session)
+    return RideResponse(
+        ride_id=ride.id,
+        status=ride.status,
+        vehicle_type=ride.vehicle_type,
+        price=ride.price,
+        estimated_arrival=ride.estimated_arrival,
+        driver_name=ride.driver_name,
+        driver_rating=ride.driver_rating,
+    )
+
+
 @router.get("/{ride_id}", response_model=RideStatusResponse)
 async def get_ride_status(
     ride_id: str,

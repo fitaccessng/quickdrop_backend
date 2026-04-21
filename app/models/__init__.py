@@ -1,4 +1,6 @@
 from app.models.address import Address
+from app.models.delivery_setting import DeliverySetting
+from app.models.service_category import ServiceCategory
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.ride import Ride, RideStatus

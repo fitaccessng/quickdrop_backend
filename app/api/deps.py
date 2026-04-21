@@ -46,3 +46,37 @@ async def get_current_vendor(
     if not vendor or not vendor.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found")
     return vendor
+
+
+async def get_current_rider(
+    session: AsyncSession = Depends(get_db_session), token: str = Depends(oauth2_scheme)
+) -> User:
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type") != "rider":
+            raise ValueError("Invalid authentication token")
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
+
+    user = await session.get(User, user_id)
+    if not user or not user.is_active or user.role != "rider":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Rider not found")
+    return user
+
+
+async def get_current_admin(
+    session: AsyncSession = Depends(get_db_session), token: str = Depends(oauth2_scheme)
+) -> User:
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type") != "admin":
+            raise ValueError("Invalid authentication token")
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
+
+    user = await session.get(User, user_id)
+    if not user or not user.is_active or user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found")
+    return user

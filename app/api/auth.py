@@ -11,6 +11,9 @@ from app.schemas.auth import (
     ForgotPasswordResponse,
     LoginRequest,
     RegisterRequest,
+    UnifiedAuthResponse,
+    UnifiedAuthUser,
+    UnifiedSignupRequest,
     VendorAuthResponse,
     VendorForgotPasswordRequest,
     VendorForgotPasswordResponse,
@@ -23,11 +26,13 @@ from app.schemas.auth import (
     AppleOAuthRequest,
 )
 from app.services.auth import (
+    authenticate_unified,
     authenticate_user,
     authenticate_vendor,
     complete_vendor_onboarding,
     create_user_reset_token,
     create_vendor_reset_token,
+    register_unified,
     register_user,
     register_vendor,
     reset_user_password,
@@ -51,6 +56,22 @@ async def register(payload: RegisterRequest, session: AsyncSession = Depends(get
     return AuthResponse(access_token=create_access_token(str(user.id), "user"), user=user)
 
 
+@router.post("/unified-signup", response_model=UnifiedAuthResponse, status_code=status.HTTP_201_CREATED)
+async def unified_signup(payload: UnifiedSignupRequest, session: AsyncSession = Depends(get_db_session)) -> UnifiedAuthResponse:
+    """Unified signup for customers, vendors, and riders"""
+    try:
+        account_type, account = await register_unified(session, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    user_data = UnifiedAuthUser.from_orm(account)
+    return UnifiedAuthResponse(
+        access_token=create_access_token(str(account.id), account_type),
+        account_type=account_type,
+        user=user_data
+    )
+
+
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_session)) -> AuthResponse:
     try:
@@ -59,6 +80,24 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_se
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     return AuthResponse(access_token=create_access_token(str(user.id), "user"), user=user)
+
+
+@router.post("/unified-login", response_model=UnifiedAuthResponse)
+async def unified_login(payload: LoginRequest, session: AsyncSession = Depends(get_db_session)) -> UnifiedAuthResponse:
+    """Unified login endpoint that accepts both customer and vendor credentials"""
+    try:
+        account_type, account = await authenticate_unified(session, payload.email, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+    # Create user object for response
+    user_data = UnifiedAuthUser.from_orm(account)
+    
+    return UnifiedAuthResponse(
+        access_token=create_access_token(str(account.id), account_type),
+        account_type=account_type,
+        user=user_data
+    )
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)

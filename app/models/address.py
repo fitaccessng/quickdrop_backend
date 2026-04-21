@@ -3,6 +3,7 @@ from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Float
 
 from app.db.session import Base
 
@@ -21,6 +22,8 @@ class Address(Base):
     state: Mapped[str] = mapped_column(String(120))
     postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     delivery_notes: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

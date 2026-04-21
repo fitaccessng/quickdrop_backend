@@ -1,5 +1,6 @@
 import re
 from uuid import uuid4
+from typing import Union
 import jwt
 
 from sqlalchemy import select
@@ -20,6 +21,7 @@ from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    UnifiedSignupRequest,
     VendorForgotPasswordRequest,
     VendorLoginRequest,
     VendorOnboardingRequest,
@@ -45,6 +47,57 @@ async def register_user(session: AsyncSession, payload: RegisterRequest) -> User
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def register_unified(session: AsyncSession, payload) -> tuple[str, Union[User, Vendor]]:
+    """
+    Unified registration for customers, vendors, and riders.
+    Returns (role, user_or_vendor) tuple
+    """
+    role = payload.role.lower()
+    
+    if role == "vendor":
+        # Register as vendor
+        existing = await session.scalar(select(Vendor).where(Vendor.email == payload.email.lower()))
+        if existing:
+            raise ValueError("A vendor account with this email already exists")
+        
+        vendor = Vendor(
+            name=payload.business_name or payload.full_name,
+            slug=await build_unique_vendor_slug(session, payload.business_name or payload.full_name),
+            email=payload.email.lower(),
+            phone=payload.phone,
+            hashed_password=hash_password(payload.password),
+            category=payload.category or "Others",
+            description="Complete onboarding to publish your storefront.",
+            city=payload.city or "Johannesburg",
+            is_active=True,
+            is_onboarded=False,
+            role="vendor",
+        )
+        session.add(vendor)
+        await session.commit()
+        await session.refresh(vendor)
+        return ("vendor", vendor)
+    else:
+        # Register as customer or rider
+        existing = await session.scalar(select(User).where(User.email == payload.email.lower()))
+        if existing:
+            raise ValueError("An account with this email already exists")
+        
+        user = User(
+            full_name=payload.full_name,
+            email=payload.email.lower(),
+            phone=payload.phone,
+            hashed_password=hash_password(payload.password),
+            role=role,  # customer or rider
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        if role == "admin":
+            return ("admin", user)
+        return ("rider" if role == "rider" else "user", user)
 
 
 async def authenticate_user(session: AsyncSession, payload: LoginRequest) -> User:
@@ -149,19 +202,55 @@ async def reset_vendor_password(session: AsyncSession, payload: VendorResetPassw
     return vendor
 
 
+async def authenticate_unified(session: AsyncSession, email: str, password: str) -> tuple[str, Union[User, Vendor]]:
+    """
+    Unified authentication that checks both User and Vendor tables.
+    Returns (account_type, user_or_vendor) tuple.
+    account_type is either 'user', 'rider', or 'vendor'
+    """
+    # Try vendor first
+    vendor = await session.scalar(select(Vendor).where(Vendor.email == email.lower()))
+    if vendor and verify_password(password, vendor.hashed_password):
+        return ("vendor", vendor)
+    
+    # Try user
+    user = await session.scalar(select(User).where(User.email == email.lower()))
+    if user and verify_password(password, user.hashed_password):
+        if user.role == "admin":
+            return ("admin", user)
+        return ("rider" if user.role == "rider" else "user", user)
+    
+    raise ValueError("Invalid email or password")
+
+
 async def complete_vendor_onboarding(
     session: AsyncSession, vendor: Vendor, payload: VendorOnboardingRequest
 ) -> Vendor:
     vendor.description = payload.description
+    vendor.category = payload.category
+    vendor.street = payload.street
+    vendor.po_box = payload.po_box
+    vendor.city = payload.city
+    vendor.latitude = payload.latitude
+    vendor.longitude = payload.longitude
     vendor.minimum_order_amount = payload.minimum_order_amount
     vendor.prep_time_minutes = payload.prep_time_minutes
     vendor.logo_url = payload.logo_url
     vendor.cover_image_url = payload.cover_image_url
     vendor.tin = payload.tin
+    vendor.business_registration_number = payload.business_registration_number
+    vendor.vat_number = payload.vat_number
+    vendor.south_african_id_number = payload.south_african_id_number
     vendor.bank_name = payload.bank_name
+    vendor.bank_account_name = payload.bank_account_name
     vendor.bank_account = payload.bank_account
     vendor.permit_url = payload.permit_url
     vendor.opening_hours = payload.opening_hours
+    vendor.delivery_radius_km = payload.delivery_radius_km
+    vendor.auto_accept_orders = payload.auto_accept_orders
+    vendor.notifications_enabled = payload.notifications_enabled
+    vendor.support_email = payload.support_email
+    vendor.support_phone = payload.support_phone
     vendor.is_onboarded = True
 
     await session.commit()

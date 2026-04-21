@@ -14,6 +14,8 @@ class AddressCreate(BaseModel):
     state: str
     postal_code: Optional[str] = None
     delivery_notes: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     is_default: bool = False
 
 
@@ -30,7 +32,23 @@ class UserProfile(BaseModel):
     full_name: str
     email: EmailStr
     phone: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    street: Optional[str] = None
+    po_box: Optional[str] = None
+    avatar_url: Optional[str] = None
     addresses: list[AddressResponse] = []
 
     class Config:
         from_attributes = True
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    street: Optional[str] = None
+    po_box: Optional[str] = None
+    avatar_url: Optional[str] = None

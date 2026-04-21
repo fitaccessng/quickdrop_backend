@@ -10,6 +10,19 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class UnifiedSignupRequest(BaseModel):
+    """Unified signup for customers, vendors, and riders"""
+    full_name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    phone: Optional[str] = Field(default=None, max_length=30)
+    password: str = Field(min_length=8, max_length=128)
+    role: str = Field(default="customer")  # customer, vendor, rider
+    # For vendors
+    business_name: Optional[str] = Field(default=None, min_length=5, max_length=160)
+    category: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    city: Optional[str] = Field(default=None, min_length=2, max_length=120)
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
@@ -49,6 +62,33 @@ class AuthResponse(TokenResponse):
     user: AuthUser
 
 
+class UnifiedAuthUser(BaseModel):
+    """User data for unified login - works for both customer and vendor"""
+    id: int
+    email: EmailStr
+    phone: Optional[str] = None
+    # Customer fields
+    full_name: Optional[str] = None
+    # Vendor fields
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    category: Optional[str] = None
+    city: Optional[str] = None
+    avatar_url: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    role: Optional[str] = None
+    is_onboarded: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UnifiedAuthResponse(TokenResponse):
+    """Unified response for both customer and vendor login"""
+    account_type: str  # "user" or "vendor"
+    user: UnifiedAuthUser
+
+
 class VendorRegisterRequest(BaseModel):
     business_name: str = Field(min_length=5, max_length=160)
     email: EmailStr
@@ -74,15 +114,30 @@ class VendorResetPasswordRequest(BaseModel):
 
 class VendorOnboardingRequest(BaseModel):
     description: str = Field(min_length=10, max_length=1000)
+    category: str = Field(min_length=2, max_length=80)
+    street: str = Field(min_length=3, max_length=255)
+    po_box: Optional[str] = Field(default=None, max_length=50)
+    city: str = Field(min_length=2, max_length=120)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     minimum_order_amount: float = Field(ge=0)
     prep_time_minutes: int = Field(ge=1, le=240)
     logo_url: Optional[str] = Field(default=None, max_length=500)
     cover_image_url: Optional[str] = Field(default=None, max_length=500)
     tin: Optional[str] = Field(default=None, max_length=50)
+    business_registration_number: Optional[str] = Field(default=None, max_length=120)
+    vat_number: Optional[str] = Field(default=None, max_length=60)
+    south_african_id_number: Optional[str] = Field(default=None, max_length=30)
     bank_name: Optional[str] = Field(default=None, max_length=120)
+    bank_account_name: Optional[str] = Field(default=None, max_length=120)
     bank_account: Optional[str] = Field(default=None, max_length=50)
     permit_url: Optional[str] = Field(default=None, max_length=500)
     opening_hours: Optional[dict] = Field(default=None, description="Opening hours by day of week")
+    delivery_radius_km: float = Field(default=5, ge=0, le=100)
+    auto_accept_orders: bool = False
+    notifications_enabled: bool = True
+    support_email: Optional[str] = Field(default=None, max_length=255)
+    support_phone: Optional[str] = Field(default=None, max_length=30)
 
 
 class VendorAuthUser(BaseModel):
@@ -94,6 +149,7 @@ class VendorAuthUser(BaseModel):
     category: str
     city: str
     is_onboarded: bool
+    is_approved: bool
 
     class Config:
         from_attributes = True

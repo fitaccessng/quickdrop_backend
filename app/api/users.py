@@ -7,7 +7,7 @@ from app.api.deps import get_current_user, get_db_session
 from app.models.address import Address
 from app.models.user import User
 from app.schemas.order import OrderResponse
-from app.schemas.user import AddressCreate, AddressResponse, UserProfile
+from app.schemas.user import AddressCreate, AddressResponse, UserProfile, UserProfileUpdate
 from app.services.orders import get_orders_for_user
 from app.api.orders import serialize_order
 
@@ -19,6 +19,22 @@ async def get_profile(
     current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db_session)
 ) -> UserProfile:
     user = await session.scalar(select(User).where(User.id == current_user.id).options(selectinload(User.addresses)))
+    return user
+
+
+@router.patch("/me", response_model=UserProfile)
+async def update_profile(
+    payload: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> UserProfile:
+    user = await session.scalar(select(User).where(User.id == current_user.id).options(selectinload(User.addresses)))
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    if user.city and user.state and user.street:
+        user.is_onboarded = True
+    await session.commit()
+    await session.refresh(user)
     return user
 
 
