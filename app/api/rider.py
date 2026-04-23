@@ -55,11 +55,17 @@ def serialize_rider_order(order: Order) -> RiderOrderResponse:
     )
 
 
+async def _get_rider_profile(session: AsyncSession, rider_id: int) -> RiderProfileResponse:
+    rider = await session.scalar(select(User).where(User.id == rider_id))
+    return RiderProfileResponse.model_validate(rider)
+
+
 @router.get("/me/profile", response_model=RiderProfileResponse)
 async def get_rider_profile(
     current_rider: User = Depends(get_current_rider),
+    session: AsyncSession = Depends(get_db_session),
 ) -> RiderProfileResponse:
-    return current_rider
+    return await _get_rider_profile(session, current_rider.id)
 
 
 @router.put("/me/profile", response_model=RiderProfileResponse)
@@ -76,8 +82,7 @@ async def update_rider_profile(
         rider.is_onboarded = True
 
     await session.commit()
-    await session.refresh(rider)
-    return rider
+    return await _get_rider_profile(session, current_rider.id)
 
 
 @router.get("/dashboard", response_model=RiderDashboardResponse)

@@ -14,12 +14,18 @@ from app.api.orders import serialize_order
 router = APIRouter(prefix="/user", tags=["user"])
 
 
+async def _get_user_profile(session: AsyncSession, user_id: int) -> UserProfile:
+    user = await session.scalar(
+        select(User).where(User.id == user_id).options(selectinload(User.addresses))
+    )
+    return UserProfile.model_validate(user)
+
+
 @router.get("/me", response_model=UserProfile)
 async def get_profile(
     current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db_session)
 ) -> UserProfile:
-    user = await session.scalar(select(User).where(User.id == current_user.id).options(selectinload(User.addresses)))
-    return user
+    return await _get_user_profile(session, current_user.id)
 
 
 @router.patch("/me", response_model=UserProfile)
@@ -34,8 +40,7 @@ async def update_profile(
     if user.city and user.state and user.street:
         user.is_onboarded = True
     await session.commit()
-    await session.refresh(user)
-    return user
+    return await _get_user_profile(session, current_user.id)
 
 
 @router.post("/addresses", response_model=AddressResponse, status_code=status.HTTP_201_CREATED)
