@@ -1,3 +1,6 @@
+import json
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,9 +24,45 @@ class Settings(BaseSettings):
     apple_private_key: str = ""
     
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:3000",
+        "https://usequickdrop.online",
+        "https://www.usequickdrop.online",
+    ]
 
-    model_config = SettingsConfigDict(env_file=".env.local", env_file_encoding="utf-8", case_sensitive=False)
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value):
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+asyncpg://", 1)
+        if value.startswith("postgresql://") and "+asyncpg" not in value:
+            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return value
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return []
+            if cleaned.startswith("["):
+                try:
+                    value = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    value = cleaned.split(",")
+            else:
+                value = cleaned.split(",")
+        if isinstance(value, list):
+            return [str(item).strip().rstrip("/") for item in value if str(item).strip()]
+        return value
+
+    model_config = SettingsConfigDict(env_file=(".env.local", ".env"), env_file_encoding="utf-8", case_sensitive=False)
 
 
 settings = Settings()
