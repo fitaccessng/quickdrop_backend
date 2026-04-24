@@ -2,9 +2,11 @@ import logging
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
@@ -83,6 +85,23 @@ if not logger.handlers:
 RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 120
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CLIENT_DIST_DIR = PROJECT_ROOT / "client" / "dist"
+NON_SPA_PATHS = {
+    "admin",
+    "auth",
+    "delivery-settings",
+    "health",
+    "notifications",
+    "orders",
+    "products",
+    "request-rider",
+    "rider",
+    "rides",
+    "service-categories",
+    "user",
+    "vendors",
+}
 
 
 def _ensure_sqlite_columns(conn) -> None:
@@ -167,3 +186,19 @@ app.include_router(system_router)
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_frontend(full_path: str):
+    if not CLIENT_DIST_DIR.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+
+    requested_path = (CLIENT_DIST_DIR / full_path).resolve()
+    if requested_path.is_file() and CLIENT_DIST_DIR in requested_path.parents:
+        return FileResponse(requested_path)
+
+    first_segment = full_path.split("/", 1)[0]
+    if first_segment in NON_SPA_PATHS:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return FileResponse(CLIENT_DIST_DIR / "index.html")

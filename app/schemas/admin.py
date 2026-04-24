@@ -123,6 +123,10 @@ class ServiceCategoryResponse(BaseModel):
         from_attributes = True
 
 
+class ServiceCategoryOverviewResponse(ServiceCategoryResponse):
+    product_count: int = 0
+
+
 class ServiceCategoryCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None

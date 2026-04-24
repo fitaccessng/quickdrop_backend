@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin, get_db_session
 from app.api.deps import get_current_user, get_db
 from app.models.delivery_setting import DeliverySetting
+from app.models.product import Product
 from app.models.service_category import ServiceCategory
 from app.models.user import User
 from app.schemas.ride import RideRequestSchema, RideResponse
@@ -14,6 +15,7 @@ from app.schemas.admin import (
     DeliveryPricingSettingsResponse,
     DeliveryPricingSettingsUpdateRequest,
     ServiceCategoryCreateRequest,
+    ServiceCategoryOverviewResponse,
     ServiceCategoryResponse,
     ServiceCategoryUpdateRequest,
 )
@@ -45,6 +47,38 @@ async def list_service_categories(
         select(ServiceCategory).where(ServiceCategory.is_active.is_(True)).order_by(ServiceCategory.name.asc())
     )
     return list(result.scalars().all())
+
+
+@router.get("/service-categories/overview", response_model=list[ServiceCategoryOverviewResponse])
+async def list_service_category_overview(
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ServiceCategoryOverviewResponse]:
+    categories_result = await session.execute(
+        select(ServiceCategory).where(ServiceCategory.is_active.is_(True)).order_by(ServiceCategory.name.asc())
+    )
+    product_result = await session.execute(
+        select(Product.category).where(Product.is_available.is_(True))
+    )
+
+    categories = list(categories_result.scalars().all())
+    product_counts: dict[str, int] = {}
+
+    for product_category in product_result.scalars().all():
+        product_slug = _slugify(product_category or "")
+        if product_slug:
+            product_counts[product_slug] = product_counts.get(product_slug, 0) + 1
+
+    return [
+        ServiceCategoryOverviewResponse(
+            id=category.id,
+            name=category.name,
+            slug=category.slug,
+            description=category.description,
+            is_active=category.is_active,
+            product_count=product_counts.get(category.slug, 0),
+        )
+        for category in categories
+    ]
 
 
 @router.get("/delivery-settings", response_model=DeliveryPricingSettingsResponse)
