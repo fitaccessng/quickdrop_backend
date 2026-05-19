@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -16,6 +17,36 @@ class VendorReviewResponse(BaseModel):
         from_attributes = True
 
 
+class VendorPromotionResponse(BaseModel):
+    id: int
+    vendor_id: int
+    product_id: Optional[int] = None
+    promo_type: str
+    title: str
+    description: str
+    discount_percent: Optional[float] = None
+    status: str
+    admin_note: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    product_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VendorPromotionCreateRequest(BaseModel):
+    product_id: Optional[int] = Field(default=None, ge=1)
+    promo_type: str = Field(min_length=3, max_length=50)
+    title: str = Field(min_length=3, max_length=160)
+    description: str = Field(min_length=5, max_length=1000)
+    discount_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+
+
 class VendorSummary(BaseModel):
     id: int
     name: str
@@ -30,6 +61,8 @@ class VendorSummary(BaseModel):
     minimum_order_amount: float
     rating: float
     review_count: int
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -38,6 +71,7 @@ class VendorSummary(BaseModel):
 class VendorDetail(VendorSummary):
     products: list[ProductSummary]
     reviews: list[VendorReviewResponse]
+    promotions: list[VendorPromotionResponse] = []
 
 
 class VendorProfileResponse(VendorSummary):
@@ -119,9 +153,14 @@ class VendorAnalyticsResponse(BaseModel):
     monthly_revenue: list[VendorRevenuePoint]
     status_breakdown: list[VendorStatusPoint]
     top_products: list[VendorTopProductPoint]
+    promotions: list[VendorPromotionResponse] = []
 
 
 class VendorPayoutSummaryResponse(BaseModel):
     available_balance: float
     total_revenue: float
+    delivered_revenue: float
+    requested_total: float
+    paid_out_total: float
+    pending_request_total: float
     payout_requests: list[PayoutRequestResponse]

@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -30,6 +31,8 @@ SQLITE_MIGRATIONS = {
         "stock_quantity": "ALTER TABLE products ADD COLUMN stock_quantity INTEGER NOT NULL DEFAULT 0",
         "low_stock_threshold": "ALTER TABLE products ADD COLUMN low_stock_threshold INTEGER NOT NULL DEFAULT 5",
         "image_urls": "ALTER TABLE products ADD COLUMN image_urls JSON",
+        "rating": "ALTER TABLE products ADD COLUMN rating FLOAT NOT NULL DEFAULT 0",
+        "review_count": "ALTER TABLE products ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0",
     },
     "users": {
         "is_onboarded": "ALTER TABLE users ADD COLUMN is_onboarded BOOLEAN NOT NULL DEFAULT 0",
@@ -49,11 +52,14 @@ SQLITE_MIGRATIONS = {
     },
     "orders": {
         "rider_id": "ALTER TABLE orders ADD COLUMN rider_id INTEGER",
+        "vendor_responded_at": "ALTER TABLE orders ADD COLUMN vendor_responded_at DATETIME",
         "tracking_latitude": "ALTER TABLE orders ADD COLUMN tracking_latitude FLOAT",
         "tracking_longitude": "ALTER TABLE orders ADD COLUMN tracking_longitude FLOAT",
     },
     "payout_requests": {},
-    "notifications": {},
+    "notifications": {
+        "action_url": "ALTER TABLE notifications ADD COLUMN action_url VARCHAR(255)",
+    },
     "vendors": {
         "street": "ALTER TABLE vendors ADD COLUMN street VARCHAR(255)",
         "po_box": "ALTER TABLE vendors ADD COLUMN po_box VARCHAR(50)",
@@ -70,12 +76,45 @@ SQLITE_MIGRATIONS = {
         "support_email": "ALTER TABLE vendors ADD COLUMN support_email VARCHAR(255)",
         "support_phone": "ALTER TABLE vendors ADD COLUMN support_phone VARCHAR(30)",
     },
+    "rides": {
+        "rider_id": "ALTER TABLE rides ADD COLUMN rider_id INTEGER",
+        "pickup_latitude": "ALTER TABLE rides ADD COLUMN pickup_latitude FLOAT NOT NULL DEFAULT 0",
+        "pickup_longitude": "ALTER TABLE rides ADD COLUMN pickup_longitude FLOAT NOT NULL DEFAULT 0",
+        "dropoff_latitude": "ALTER TABLE rides ADD COLUMN dropoff_latitude FLOAT NOT NULL DEFAULT 0",
+        "dropoff_longitude": "ALTER TABLE rides ADD COLUMN dropoff_longitude FLOAT NOT NULL DEFAULT 0",
+        "distance_meters": "ALTER TABLE rides ADD COLUMN distance_meters FLOAT NOT NULL DEFAULT 0",
+        "duration_seconds": "ALTER TABLE rides ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0",
+        "estimated_arrival_seconds": "ALTER TABLE rides ADD COLUMN estimated_arrival_seconds INTEGER",
+        "final_price": "ALTER TABLE rides ADD COLUMN final_price FLOAT",
+        "rider_payout_amount": "ALTER TABLE rides ADD COLUMN rider_payout_amount FLOAT",
+        "rider_payout_percentage": "ALTER TABLE rides ADD COLUMN rider_payout_percentage FLOAT",
+        "currency": "ALTER TABLE rides ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT 'ZAR'",
+        "route_geometry": "ALTER TABLE rides ADD COLUMN route_geometry JSON",
+        "pickup_heading": "ALTER TABLE rides ADD COLUMN pickup_heading FLOAT",
+        "rider_latitude": "ALTER TABLE rides ADD COLUMN rider_latitude FLOAT",
+        "rider_longitude": "ALTER TABLE rides ADD COLUMN rider_longitude FLOAT",
+        "rider_heading": "ALTER TABLE rides ADD COLUMN rider_heading FLOAT",
+        "rider_speed": "ALTER TABLE rides ADD COLUMN rider_speed FLOAT",
+        "customer_note": "ALTER TABLE rides ADD COLUMN customer_note TEXT",
+        "receiver_name": "ALTER TABLE rides ADD COLUMN receiver_name VARCHAR(120)",
+        "receiver_phone": "ALTER TABLE rides ADD COLUMN receiver_phone VARCHAR(40)",
+        "accepted_at": "ALTER TABLE rides ADD COLUMN accepted_at DATETIME",
+        "started_at": "ALTER TABLE rides ADD COLUMN started_at DATETIME",
+        "completed_at": "ALTER TABLE rides ADD COLUMN completed_at DATETIME",
+    },
     "addresses": {
         "latitude": "ALTER TABLE addresses ADD COLUMN latitude FLOAT",
         "longitude": "ALTER TABLE addresses ADD COLUMN longitude FLOAT",
     },
     "service_categories": {},
     "delivery_settings": {},
+}
+
+SQLITE_MIGRATIONS["delivery_settings"] = {
+    "bike_surcharge": "ALTER TABLE delivery_settings ADD COLUMN bike_surcharge FLOAT NOT NULL DEFAULT 0",
+    "car_surcharge": "ALTER TABLE delivery_settings ADD COLUMN car_surcharge FLOAT NOT NULL DEFAULT 0",
+    "xl_surcharge": "ALTER TABLE delivery_settings ADD COLUMN xl_surcharge FLOAT NOT NULL DEFAULT 0",
+    "rider_payout_percentage": "ALTER TABLE delivery_settings ADD COLUMN rider_payout_percentage FLOAT NOT NULL DEFAULT 30",
 }
 
 logger = logging.getLogger("quickdrop.api")
@@ -104,6 +143,20 @@ NON_SPA_PATHS = {
 }
 
 
+def _apply_cors_headers(request: Request, response: JSONResponse) -> JSONResponse:
+    origin = request.headers.get("origin")
+    if not origin:
+        return response
+
+    normalized_origin = origin.rstrip("/")
+    regex_match = re.match(settings.cors_origin_regex, normalized_origin) if settings.cors_origin_regex else None
+    if normalized_origin in settings.cors_origins or regex_match:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
+
+
 def _ensure_sqlite_columns(conn) -> None:
     for table_name, columns in SQLITE_MIGRATIONS.items():
         existing = {
@@ -129,6 +182,7 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -155,7 +209,10 @@ async def rate_limit_middleware(request: Request, call_next):
     while bucket and now - bucket[0] > RATE_LIMIT_WINDOW_SECONDS:
         bucket.popleft()
     if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
-        return JSONResponse(status_code=429, content={"detail": "Too many requests. Please slow down."})
+        return _apply_cors_headers(
+            request,
+            JSONResponse(status_code=429, content={"detail": "Too many requests. Please slow down."}),
+        )
     bucket.append(now)
     return await call_next(request)
 
@@ -169,7 +226,10 @@ async def error_logging_middleware(request: Request, call_next):
         return response
     except Exception:
         logger.exception("Unhandled error while processing %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        return _apply_cors_headers(
+            request,
+            JSONResponse(status_code=500, content={"detail": "Internal server error"}),
+        )
 
 app.include_router(auth_router)
 app.include_router(admin_router)

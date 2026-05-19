@@ -17,6 +17,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(40), default="general", index=True)
+    action_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     sound_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

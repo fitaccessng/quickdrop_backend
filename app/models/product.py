@@ -22,8 +22,30 @@ class Product(Base):
     prep_time_minutes: Mapped[int] = mapped_column(default=15)
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     low_stock_threshold: Mapped[int] = mapped_column(Integer, default=5)
+    rating: Mapped[float] = mapped_column(Float, default=0)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     vendor = relationship("Vendor", back_populates="products")
     order_items = relationship("OrderItem", back_populates="product")
+    reviews = relationship("ProductReview", back_populates="product", cascade="all, delete-orphan")
+    promotions = relationship("VendorPromotion", back_populates="product")
+
+
+class ProductReview(Base):
+    __tablename__ = "product_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    author_name: Mapped[str] = mapped_column(String(120))
+    rating: Mapped[int] = mapped_column(Integer)
+    comment: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    product = relationship("Product", back_populates="reviews")
+    user = relationship("User")

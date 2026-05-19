@@ -32,11 +32,14 @@ class UserProfile(BaseModel):
     full_name: str
     email: EmailStr
     phone: Optional[str] = None
+    role: Optional[str] = None
+    is_onboarded: bool = False
     city: Optional[str] = None
     state: Optional[str] = None
     street: Optional[str] = None
     po_box: Optional[str] = None
     avatar_url: Optional[str] = None
+    vehicle_type: Optional[str] = None
     addresses: list[AddressResponse] = []
 
     class Config:

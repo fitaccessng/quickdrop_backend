@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -59,9 +59,31 @@ async def create_address(
     return address
 
 
+@router.patch("/addresses/{address_id}", response_model=AddressResponse)
+async def update_address(
+    address_id: int,
+    payload: AddressCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> AddressResponse:
+    address = await session.get(Address, address_id)
+    if not address or address.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    if payload.is_default:
+        await session.execute(update(Address).where(Address.user_id == current_user.id).values(is_default=False))
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(address, field, value)
+
+    await session.commit()
+    await session.refresh(address)
+    return address
+
+
 @router.get("/orders", response_model=list[OrderResponse], status_code=status.HTTP_200_OK)
 async def get_user_order_history(
     current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_db_session)
 ) -> list[OrderResponse]:
     orders = await get_orders_for_user(session, current_user.id)
-    return [serialize_order(order) for order in orders]
+    return [await serialize_order(order) for order in orders]

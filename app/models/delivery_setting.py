@@ -13,6 +13,10 @@ class DeliverySetting(Base):
     base_fee: Mapped[float] = mapped_column(Float, default=0)
     fee_per_km: Mapped[float] = mapped_column(Float, default=0)
     free_distance_km: Mapped[float] = mapped_column(Float, default=0)
+    bike_surcharge: Mapped[float] = mapped_column(Float, default=0)
+    car_surcharge: Mapped[float] = mapped_column(Float, default=0)
+    xl_surcharge: Mapped[float] = mapped_column(Float, default=0)
+    rider_payout_percentage: Mapped[float] = mapped_column(Float, default=30)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

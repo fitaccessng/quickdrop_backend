@@ -9,6 +9,10 @@ class PayoutRequestCreate(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
 
 
+class PayoutRequestStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(pending|approved|rejected|paid)$")
+
+
 class PayoutRequestResponse(BaseModel):
     id: int
     requester_role: str
@@ -33,7 +37,13 @@ class NotificationResponse(BaseModel):
     category: str
     is_read: bool
     sound_enabled: bool
+    recipient_role: str
+    action_url: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class NotificationUnreadCountResponse(BaseModel):
+    unread_count: int

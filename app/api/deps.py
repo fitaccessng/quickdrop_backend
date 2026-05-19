@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,7 @@ from app.models.user import User
 from app.models.vendor import Vendor
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
 async def get_db_session(session: AsyncSession = Depends(get_db)) -> AsyncSession:
@@ -80,3 +83,67 @@ async def get_current_admin(
     if not user or not user.is_active or user.role != "admin":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found")
     return user
+
+
+async def get_optional_current_user(
+    session: AsyncSession = Depends(get_db_session), token: Optional[str] = Depends(optional_oauth2_scheme)
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type", "user") != "user":
+            return None
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        return None
+    user = await session.get(User, user_id)
+    return user if user and user.is_active else None
+
+
+async def get_optional_current_vendor(
+    session: AsyncSession = Depends(get_db_session), token: Optional[str] = Depends(optional_oauth2_scheme)
+) -> Optional[Vendor]:
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type") != "vendor":
+            return None
+        vendor_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        return None
+    vendor = await session.get(Vendor, vendor_id)
+    return vendor if vendor and vendor.is_active else None
+
+
+async def get_optional_current_rider(
+    session: AsyncSession = Depends(get_db_session), token: Optional[str] = Depends(optional_oauth2_scheme)
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type") != "rider":
+            return None
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        return None
+    user = await session.get(User, user_id)
+    return user if user and user.is_active and user.role == "rider" else None
+
+
+async def get_optional_current_admin(
+    session: AsyncSession = Depends(get_db_session), token: Optional[str] = Depends(optional_oauth2_scheme)
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        if payload.get("type") != "admin":
+            return None
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError):
+        return None
+    user = await session.get(User, user_id)
+    return user if user and user.is_active and user.role == "admin" else None

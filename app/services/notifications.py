@@ -12,6 +12,7 @@ async def create_notification(
     title: str,
     message: str,
     category: str = "general",
+    action_url: Optional[str] = None,
     recipient_user_id: Optional[int] = None,
     recipient_vendor_id: Optional[int] = None,
     sound_enabled: bool = True,
@@ -23,6 +24,7 @@ async def create_notification(
         title=title,
         message=message,
         category=category,
+        action_url=action_url,
         sound_enabled=sound_enabled,
     )
     session.add(notification)

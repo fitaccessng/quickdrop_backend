@@ -1,7 +1,8 @@
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -9,11 +10,14 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_vendor, get_db_session
 from app.models.payout_request import PayoutRequest
 from app.models.order import Order, OrderItem, OrderStatus
-from app.models.vendor import Vendor
+from app.models.product import Product
+from app.models.vendor import Vendor, VendorPromotion
 from app.schemas.common import PayoutRequestCreate, PayoutRequestResponse
 from app.schemas.vendor import (
     VendorAnalyticsResponse,
     VendorDetail,
+    VendorPromotionCreateRequest,
+    VendorPromotionResponse,
     VendorPayoutSummaryResponse,
     VendorProfileResponse,
     VendorProfileUpdateRequest,
@@ -28,6 +32,7 @@ router = APIRouter(prefix="/vendors", tags=["vendors"])
 async def list_vendors(
     search: Optional[str] = None,
     category: Optional[str] = None,
+    approved: Optional[bool] = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> list[VendorSummary]:
     query = select(Vendor).where(Vendor.is_active.is_(True))
@@ -36,6 +41,8 @@ async def list_vendors(
         query = query.where(or_(Vendor.name.ilike(pattern), Vendor.description.ilike(pattern)))
     if category and category.lower() != "all":
         query = query.where(Vendor.category.ilike(category))
+    if approved is not None:
+        query = query.where(Vendor.is_approved.is_(approved))
 
     result = await session.execute(query.order_by(Vendor.rating.desc(), Vendor.review_count.desc()))
     return list(result.scalars().all())
@@ -75,11 +82,34 @@ async def get_vendor_payouts(
         .order_by(PayoutRequest.created_at.desc())
         .limit(10)
     )
-    revenue_result = await session.execute(select(func.coalesce(func.sum(Order.total_amount), 0)).where(Order.vendor_id == current_vendor.id))
-    total_revenue = float(revenue_result.scalar() or 0)
+    total_revenue_result = await session.execute(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(Order.vendor_id == current_vendor.id)
+    )
+    delivered_revenue_result = await session.execute(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.vendor_id == current_vendor.id,
+            Order.status == OrderStatus.delivered,
+        )
+    )
+    payout_totals_result = await session.execute(
+        select(
+            func.coalesce(func.sum(PayoutRequest.amount), 0),
+            func.coalesce(func.sum(PayoutRequest.amount).filter(PayoutRequest.status == "paid"), 0),
+            func.coalesce(func.sum(PayoutRequest.amount).filter(PayoutRequest.status.in_(["pending", "approved"])), 0),
+        ).where(PayoutRequest.requester_vendor_id == current_vendor.id, PayoutRequest.requester_role == "vendor")
+    )
+    total_revenue = float(total_revenue_result.scalar() or 0)
+    delivered_revenue = float(delivered_revenue_result.scalar() or 0)
+    requested_total, paid_out_total, pending_request_total = payout_totals_result.one()
+    available_balance = max(delivered_revenue - float(paid_out_total or 0), 0.0)
+
     return VendorPayoutSummaryResponse(
-        available_balance=total_revenue,
+        available_balance=available_balance,
         total_revenue=total_revenue,
+        delivered_revenue=delivered_revenue,
+        requested_total=float(requested_total or 0),
+        paid_out_total=float(paid_out_total or 0),
+        pending_request_total=float(pending_request_total or 0),
         payout_requests=list(payout_result.scalars().all()),
     )
 
@@ -90,9 +120,34 @@ async def create_vendor_payout_request(
     session: AsyncSession = Depends(get_db_session),
     current_vendor: Vendor = Depends(get_current_vendor),
 ) -> PayoutRequestResponse:
-    revenue_result = await session.execute(select(func.coalesce(func.sum(Order.total_amount), 0)).where(Order.vendor_id == current_vendor.id))
-    total_revenue = float(revenue_result.scalar() or 0)
-    if payload.amount > total_revenue:
+    delivered_revenue_result = await session.execute(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.vendor_id == current_vendor.id,
+            Order.status == OrderStatus.delivered,
+        )
+    )
+    outstanding_total_result = await session.execute(
+        select(func.coalesce(func.sum(PayoutRequest.amount), 0)).where(
+            PayoutRequest.requester_vendor_id == current_vendor.id,
+            PayoutRequest.requester_role == "vendor",
+            PayoutRequest.status.in_(["pending", "approved"]),
+        )
+    )
+    delivered_revenue = float(delivered_revenue_result.scalar() or 0)
+    paid_out_total_result = await session.execute(
+        select(func.coalesce(func.sum(PayoutRequest.amount), 0)).where(
+            PayoutRequest.requester_vendor_id == current_vendor.id,
+            PayoutRequest.requester_role == "vendor",
+            PayoutRequest.status == "paid",
+        )
+    )
+    outstanding_total = float(outstanding_total_result.scalar() or 0)
+    paid_out_total = float(paid_out_total_result.scalar() or 0)
+    requestable_balance = max(delivered_revenue - paid_out_total - outstanding_total, 0.0)
+
+    if not current_vendor.bank_name or not current_vendor.bank_account_name or not current_vendor.bank_account:
+        raise HTTPException(status_code=400, detail="Complete your bank details before requesting a payout")
+    if payload.amount > requestable_balance:
         raise HTTPException(status_code=400, detail="Requested amount exceeds current vendor balance")
     payout = PayoutRequest(
         requester_role="vendor",
@@ -112,6 +167,7 @@ async def create_vendor_payout_request(
         title="New vendor payout request",
         message=f"{current_vendor.name} requested {payload.amount:.2f} for payout.",
         category="payment",
+        action_url="/admin/dashboard",
     )
     await session.commit()
     await session.refresh(payout)
@@ -126,7 +182,7 @@ async def get_my_vendor_analytics(
     vendor = await session.scalar(
         select(Vendor)
         .where(Vendor.id == current_vendor.id)
-        .options(selectinload(Vendor.products))
+        .options(selectinload(Vendor.products), selectinload(Vendor.promotions).selectinload(VendorPromotion.product))
     )
     orders_result = await session.execute(
         select(Order)
@@ -176,7 +232,48 @@ async def get_my_vendor_analytics(
         monthly_revenue=monthly_revenue,
         status_breakdown=status_breakdown,
         top_products=top_products,
+        promotions=sorted(vendor.promotions, key=lambda item: item.updated_at, reverse=True),
     )
+
+
+@router.get("/me/promotions", response_model=list[VendorPromotionResponse])
+async def get_my_vendor_promotions(
+    session: AsyncSession = Depends(get_db_session),
+    current_vendor: Vendor = Depends(get_current_vendor),
+) -> list[VendorPromotionResponse]:
+    result = await session.execute(
+        select(VendorPromotion)
+        .where(VendorPromotion.vendor_id == current_vendor.id)
+        .options(selectinload(VendorPromotion.product))
+        .order_by(VendorPromotion.updated_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/me/promotions", response_model=VendorPromotionResponse, status_code=status.HTTP_201_CREATED)
+async def create_my_vendor_promotion(
+    payload: VendorPromotionCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_vendor: Vendor = Depends(get_current_vendor),
+) -> VendorPromotionResponse:
+    if payload.ends_at and payload.starts_at and payload.ends_at < payload.starts_at:
+        raise HTTPException(status_code=400, detail="Promotion end date must be after the start date")
+
+    if payload.product_id is not None:
+        product = await session.scalar(
+            select(Product).where(
+                Product.id == payload.product_id,
+                Product.vendor_id == current_vendor.id,
+            )
+        )
+        if not product:
+            raise HTTPException(status_code=404, detail="Selected product was not found in your catalog")
+
+    promotion = VendorPromotion(vendor_id=current_vendor.id, status="pending", **payload.model_dump())
+    session.add(promotion)
+    await session.commit()
+    await session.refresh(promotion)
+    return promotion
 
 
 @router.get("/{vendor_id}", response_model=VendorDetail)
@@ -184,7 +281,11 @@ async def get_vendor(vendor_id: int, session: AsyncSession = Depends(get_db_sess
     vendor = await session.scalar(
         select(Vendor)
         .where(Vendor.id == vendor_id, Vendor.is_active.is_(True))
-        .options(selectinload(Vendor.products), selectinload(Vendor.reviews))
+        .options(
+            selectinload(Vendor.products),
+            selectinload(Vendor.reviews),
+            selectinload(Vendor.promotions).selectinload(VendorPromotion.product),
+        )
     )
     if not vendor:
         raise HTTPException(status_code=404, detail="Vendor not found")

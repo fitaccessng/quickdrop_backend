@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin, get_db_session
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_admin, get_current_user, get_db_session
 from app.models.delivery_setting import DeliverySetting
 from app.models.product import Product
 from app.models.service_category import ServiceCategory
@@ -32,7 +31,15 @@ async def _get_or_create_delivery_settings(session: AsyncSession) -> DeliverySet
     settings = await session.scalar(select(DeliverySetting).order_by(DeliverySetting.id.asc()))
     if settings:
         return settings
-    settings = DeliverySetting(base_fee=0, fee_per_km=0, free_distance_km=0)
+    settings = DeliverySetting(
+        base_fee=0,
+        fee_per_km=0,
+        free_distance_km=0,
+        bike_surcharge=0,
+        car_surcharge=0,
+        xl_surcharge=0,
+        rider_payout_percentage=30,
+    )
     session.add(settings)
     await session.commit()
     await session.refresh(settings)
@@ -92,17 +99,16 @@ async def get_delivery_settings(
 async def request_rider(
     payload: RideRequestSchema,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_session),
 ) -> RideResponse:
     ride = await create_ride_request(current_user.id, payload, session)
     return RideResponse(
         ride_id=ride.id,
         status=ride.status,
         vehicle_type=ride.vehicle_type,
+        currency=ride.currency,
         price=ride.price,
-        estimated_arrival=ride.estimated_arrival,
-        driver_name=ride.driver_name,
-        driver_rating=ride.driver_rating,
+        estimated_arrival_seconds=ride.estimated_arrival_seconds,
     )
 
 
@@ -174,6 +180,10 @@ async def update_admin_delivery_settings(
     settings.base_fee = payload.base_fee
     settings.fee_per_km = payload.fee_per_km
     settings.free_distance_km = payload.free_distance_km
+    settings.bike_surcharge = payload.bike_surcharge
+    settings.car_surcharge = payload.car_surcharge
+    settings.xl_surcharge = payload.xl_surcharge
+    settings.rider_payout_percentage = payload.rider_payout_percentage
     await session.commit()
     await session.refresh(settings)
     return settings

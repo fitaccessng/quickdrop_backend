@@ -54,6 +54,7 @@ class Vendor(Base):
     products = relationship("Product", back_populates="vendor", cascade="all, delete-orphan")
     reviews = relationship("VendorReview", back_populates="vendor", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="vendor")
+    promotions = relationship("VendorPromotion", back_populates="vendor", cascade="all, delete-orphan")
 
 
 class VendorReview(Base):
@@ -67,6 +68,33 @@ class VendorReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     vendor = relationship("Vendor", back_populates="reviews")
+
+
+class VendorPromotion(Base):
+    __tablename__ = "vendor_promotions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vendor_id: Mapped[int] = mapped_column(ForeignKey("vendors.id", ondelete="CASCADE"), index=True)
+    product_id: Mapped[Optional[int]] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    promo_type: Mapped[str] = mapped_column(String(50), default="seasonal_discount")
+    title: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    discount_percent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    admin_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    vendor = relationship("Vendor", back_populates="promotions")
+    product = relationship("Product", back_populates="promotions")
+
+    @property
+    def product_name(self) -> Optional[str]:
+        return self.product.name if self.product else None
 
 
 class Rider(Base):

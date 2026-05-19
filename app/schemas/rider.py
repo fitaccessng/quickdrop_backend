@@ -61,6 +61,7 @@ class RiderOrderResponse(BaseModel):
     rider: Optional[RiderSummary] = None
     tracking_latitude: Optional[float] = None
     tracking_longitude: Optional[float] = None
+    requires_rider_response: bool = False
 
 
 class RiderDashboardResponse(BaseModel):
@@ -109,3 +110,9 @@ class RiderOrderUpdateRequest(BaseModel):
 class RiderLocationUpdateRequest(BaseModel):
     tracking_latitude: float
     tracking_longitude: float
+
+
+class RiderRouteResponse(BaseModel):
+    distance_meters: float
+    duration_seconds: float
+    coordinates: list[list[float]]

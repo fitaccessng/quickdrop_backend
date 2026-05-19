@@ -1,6 +1,30 @@
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+class ProductReviewResponse(BaseModel):
+    id: int
+    user_id: int
+    author_name: str
+    rating: int
+    comment: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProductReviewCreateRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(min_length=3, max_length=1000)
+
+
+class ProductReviewUpdateRequest(BaseModel):
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    comment: Optional[str] = Field(default=None, min_length=3, max_length=1000)
 
 
 class ProductSummary(BaseModel):
@@ -16,17 +40,23 @@ class ProductSummary(BaseModel):
     prep_time_minutes: int
     stock_quantity: int
     low_stock_threshold: int
+    rating: float = 0
+    review_count: int = 0
     is_available: bool
 
     class Config:
         from_attributes = True
 
 
+class ProductDetailResponse(ProductSummary):
+    reviews: list[ProductReviewResponse] = []
+
+
 class ProductCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     description: str = Field(min_length=10, max_length=2000)
     image_url: Optional[str] = Field(default=None, max_length=500)
-    image_urls: list[str] = Field(default_factory=list, min_length=3, max_length=5)
+    image_urls: list[str] = Field(default_factory=list, max_length=5)
     sku: Optional[str] = Field(default=None, max_length=64)
     price: float = Field(gt=0)
     category: str = Field(min_length=2, max_length=80)
@@ -40,7 +70,7 @@ class ProductUpdateRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=160)
     description: Optional[str] = Field(default=None, min_length=10, max_length=2000)
     image_url: Optional[str] = Field(default=None, max_length=500)
-    image_urls: Optional[list[str]] = Field(default=None, min_length=3, max_length=5)
+    image_urls: Optional[list[str]] = Field(default=None, max_length=5)
     sku: Optional[str] = Field(default=None, max_length=64)
     price: Optional[float] = Field(default=None, gt=0)
     category: Optional[str] = Field(default=None, min_length=2, max_length=80)

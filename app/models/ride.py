@@ -1,42 +1,84 @@
-from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import Column, String, Integer, Float, DateTime, Enum
-from sqlalchemy.orm import relationship
-import enum
+from __future__ import annotations
 
-from app.db.base import Base
+from datetime import datetime
+import enum
+from typing import Any, Optional
+
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.session import Base
 
 
 class RideStatus(str, enum.Enum):
-    """Ride status enumeration for Python 3.9 compatibility"""
     searching = "searching"
     accepted = "accepted"
-    en_route = "en_route"
-    arrived = "arrived"
+    arriving = "arriving"
+    on_trip = "on_trip"
     completed = "completed"
     cancelled = "cancelled"
 
 
 class Ride(Base):
-    """Ride request model"""
     __tablename__ = "rides"
 
-    id = Column(String, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)
-    vehicle_type = Column(String, nullable=False)  # 'bike', 'car', 'xl'
-    status = Column(String, default=RideStatus.searching.value, nullable=False)
-    price = Column(Float, nullable=False)
-    pickup_location = Column(String, nullable=False)
-    dropoff_location = Column(String, nullable=False)
-    driver_id = Column(Integer, nullable=True)
-    driver_name = Column(String, nullable=True)
-    driver_phone = Column(String, nullable=True)
-    driver_rating = Column(Float, nullable=True)
-    vehicle_number = Column(String, nullable=True)
-    estimated_arrival = Column(Integer, nullable=True)  # in minutes
-    tracking_note = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    rider_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    vehicle_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default=RideStatus.searching.value, nullable=False, index=True)
+    pickup_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    dropoff_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    pickup_latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    dropoff_latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    dropoff_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    distance_meters: Mapped[float] = mapped_column(Float, default=0)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_arrival_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    final_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_payout_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_payout_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    currency: Mapped[str] = mapped_column(String(8), default="ZAR")
+    route_geometry: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
+    pickup_heading: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_heading: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rider_speed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tracking_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    customer_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    receiver_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    receiver_phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
-    class Config:
-        from_attributes = True
+    rider = relationship("User", foreign_keys=[rider_id])
+    user = relationship("User", foreign_keys=[user_id])
+    location_events = relationship(
+        "RideLocationEvent",
+        back_populates="ride",
+        cascade="all, delete-orphan",
+        order_by="RideLocationEvent.recorded_at.asc()",
+    )
+
+
+class RideLocationEvent(Base):
+    __tablename__ = "ride_location_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ride_id: Mapped[str] = mapped_column(String(32), ForeignKey("rides.id", ondelete="CASCADE"), index=True)
+    rider_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    heading: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    speed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    ride = relationship("Ride", back_populates="location_events")

@@ -21,6 +21,8 @@ class UnifiedSignupRequest(BaseModel):
     business_name: Optional[str] = Field(default=None, min_length=5, max_length=160)
     category: Optional[str] = Field(default=None, min_length=2, max_length=80)
     city: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    logo_url: Optional[str] = Field(default=None, max_length=5000000)
+    cover_image_url: Optional[str] = Field(default=None, max_length=5000000)
 
 
 class LoginRequest(BaseModel):
@@ -96,6 +98,8 @@ class VendorRegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     category: str = Field(min_length=2, max_length=80)
     city: str = Field(min_length=2, max_length=120)
+    logo_url: Optional[str] = Field(default=None, max_length=5000000)
+    cover_image_url: Optional[str] = Field(default=None, max_length=5000000)
 
 
 class VendorLoginRequest(BaseModel):

@@ -34,6 +34,7 @@ class Order(Base):
     payment_method: Mapped[str] = mapped_column(String(50))
     payment_status: Mapped[str] = mapped_column(String(50), default="pending")
     payment_reference: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    vendor_responded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tracking_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tracking_latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     tracking_longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

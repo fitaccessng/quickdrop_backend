@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import field_validator
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7
     frontend_origin: str = "http://localhost:5173"
     environment: str = "development"
+    paystack_secret_key: str = ""
+    paystack_public_key: str = ""
     
     # Google OAuth
     google_client_id: str = ""
@@ -29,16 +32,28 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "https://usequickdrop.online",
         "https://www.usequickdrop.online",
     ]
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value):
         if not isinstance(value, str):
             return value
+        if value.startswith("sqlite"):
+            prefix, _, db_path = value.partition(":///")
+            normalized_path = db_path.strip()
+            if normalized_path.startswith("./"):
+                server_root = Path(__file__).resolve().parents[2]
+                absolute_path = (server_root / normalized_path[2:]).resolve()
+                return f"{prefix}:///{absolute_path}"
         if value.startswith("postgres://"):
             return value.replace("postgres://", "postgresql+asyncpg://", 1)
         if value.startswith("postgresql://") and "+asyncpg" not in value:

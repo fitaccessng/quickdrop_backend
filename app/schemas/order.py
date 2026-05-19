@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.order import OrderStatus
 
@@ -14,9 +14,20 @@ class OrderItemCreate(BaseModel):
 
 class CheckoutRequest(BaseModel):
     address_id: int
+    address_latitude: Optional[float] = None
+    address_longitude: Optional[float] = None
     payment_method: str = Field(min_length=2, max_length=50)
     payment_reference: Optional[str] = Field(default=None, max_length=120)
     items: list[OrderItemCreate] = Field(min_length=1)
+
+    @field_validator("payment_method")
+    @classmethod
+    def validate_payment_method(cls, value: str) -> str:
+        allowed_methods = {"paystack", "cash_on_delivery"}
+        normalized_value = value.strip().lower()
+        if normalized_value not in allowed_methods:
+            raise ValueError("Unsupported payment method.")
+        return normalized_value
 
 
 class CheckoutQuoteItem(BaseModel):
@@ -62,6 +73,8 @@ class OrderAddressSummary(BaseModel):
     line1: str
     city: str
     state: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -89,6 +102,11 @@ class RiderSummary(BaseModel):
         from_attributes = True
 
 
+class OrderTrackingLocation(BaseModel):
+    latitude: float
+    longitude: float
+
+
 class OrderResponse(BaseModel):
     id: int
     order_reference: str
@@ -109,12 +127,25 @@ class OrderResponse(BaseModel):
     items: list[OrderItemResponse]
     tracking_latitude: Optional[float] = None
     tracking_longitude: Optional[float] = None
+    destination_latitude: Optional[float] = None
+    destination_longitude: Optional[float] = None
+    rider_location: Optional[OrderTrackingLocation] = None
+    route_geometry: list[list[float]] = []
+    distance_meters_remaining: Optional[float] = None
+    duration_seconds_remaining: Optional[float] = None
+    estimated_arrival_seconds: Optional[int] = None
 
 
 class CheckoutResponse(BaseModel):
     order_reference: str
     orders: list[OrderResponse]
     total_amount: float
+
+
+class CheckoutInitializationResponse(BaseModel):
+    authorization_url: str
+    access_code: str
+    reference: str
 
 
 class OrderStatusResponse(BaseModel):
@@ -127,6 +158,13 @@ class OrderStatusResponse(BaseModel):
     rider: Optional[RiderSummary] = None
     tracking_latitude: Optional[float] = None
     tracking_longitude: Optional[float] = None
+    destination_latitude: Optional[float] = None
+    destination_longitude: Optional[float] = None
+    rider_location: Optional[OrderTrackingLocation] = None
+    route_geometry: list[list[float]] = []
+    distance_meters_remaining: Optional[float] = None
+    duration_seconds_remaining: Optional[float] = None
+    estimated_arrival_seconds: Optional[int] = None
 
 
 class VendorOrderStatusUpdate(BaseModel):
@@ -154,3 +192,10 @@ class VendorOrderResponse(BaseModel):
     items: list[OrderItemResponse]
     tracking_latitude: Optional[float] = None
     tracking_longitude: Optional[float] = None
+    destination_latitude: Optional[float] = None
+    destination_longitude: Optional[float] = None
+    rider_location: Optional[OrderTrackingLocation] = None
+    route_geometry: list[list[float]] = []
+    distance_meters_remaining: Optional[float] = None
+    duration_seconds_remaining: Optional[float] = None
+    estimated_arrival_seconds: Optional[int] = None
