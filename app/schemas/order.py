@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -11,6 +12,10 @@ class OrderItemCreate(BaseModel):
     quantity: int = Field(ge=1, le=99)
     notes: Optional[str] = Field(default=None, max_length=255)
 
+class DeliverySpeed(str, Enum):
+    standard = "standard"
+    priority = "priority"
+
 
 class CheckoutRequest(BaseModel):
     address_id: int
@@ -18,6 +23,7 @@ class CheckoutRequest(BaseModel):
     address_longitude: Optional[float] = None
     payment_method: str = Field(min_length=2, max_length=50)
     payment_reference: Optional[str] = Field(default=None, max_length=120)
+    delivery_speed: DeliverySpeed = DeliverySpeed.standard
     items: list[OrderItemCreate] = Field(min_length=1)
 
     @field_validator("payment_method")
@@ -44,6 +50,7 @@ class CheckoutQuoteResponse(BaseModel):
     delivery_fee: float
     total_amount: float
     currency: str = "ZAR"
+    delivery_speed: DeliverySpeed
     items: list[CheckoutQuoteItem]
 
 
@@ -113,6 +120,7 @@ class OrderResponse(BaseModel):
     status: OrderStatus
     subtotal_amount: float
     delivery_fee: float
+    delivery_speed: DeliverySpeed
     total_amount: float
     payment_method: str
     payment_status: str
@@ -153,6 +161,7 @@ class OrderStatusResponse(BaseModel):
     order_reference: str
     status: OrderStatus
     tracking_note: Optional[str] = None
+    delivery_speed: DeliverySpeed
     updated_at: datetime
     timeline: list[dict[str, str]]
     rider: Optional[RiderSummary] = None

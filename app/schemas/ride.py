@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -60,6 +60,10 @@ class RideQuoteResponse(BaseModel):
     duration_seconds: int
     estimated_fare: float
     eta_seconds: int
+    distance_km: float
+    duration_minutes: float
+    fare: Dict[str, Union[float, str]]
+    route_geometry: list[list[float]]
 
 
 class RideResponse(BaseModel):
@@ -79,8 +83,19 @@ class RideStatusResponse(BaseModel):
     currency: str
     price: float
     final_price: Optional[float] = None
+    payment_status: str = "pending"
+    payment_reference: Optional[str] = None
     rider_payout_amount: Optional[float] = None
     rider_payout_percentage: Optional[float] = None
+    estimated_distance_km: Optional[float] = None
+    estimated_duration_minutes: Optional[float] = None
+    base_fare: Optional[float] = None
+    distance_fare: Optional[float] = None
+    time_fare: Optional[float] = None
+    service_fee: Optional[float] = None
+    booking_fee: Optional[float] = None
+    discount: Optional[float] = None
+    surge_multiplier: Optional[float] = None
     pickup: RidePoint
     dropoff: RidePoint
     distance_meters: float
@@ -125,6 +140,15 @@ class RideAdminSnapshot(BaseModel):
     pickup: RidePoint
     dropoff: RidePoint
     estimated_arrival_seconds: Optional[int] = None
+    estimated_distance_km: Optional[float] = None
+    estimated_duration_minutes: Optional[float] = None
+    base_fare: Optional[float] = None
+    distance_fare: Optional[float] = None
+    time_fare: Optional[float] = None
+    service_fee: Optional[float] = None
+    booking_fee: Optional[float] = None
+    discount: Optional[float] = None
+    surge_multiplier: Optional[float] = None
     customer_note: Optional[str] = None
     receiver_name: Optional[str] = None
     receiver_phone: Optional[str] = None

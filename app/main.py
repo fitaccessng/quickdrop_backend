@@ -35,6 +35,7 @@ SQLITE_MIGRATIONS = {
         "review_count": "ALTER TABLE products ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0",
     },
     "users": {
+        "password_reset_at": "ALTER TABLE users ADD COLUMN password_reset_at DATETIME",
         "is_onboarded": "ALTER TABLE users ADD COLUMN is_onboarded BOOLEAN NOT NULL DEFAULT 0",
         "avatar_url": "ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)",
         "city": "ALTER TABLE users ADD COLUMN city VARCHAR(120)",
@@ -77,6 +78,17 @@ SQLITE_MIGRATIONS = {
         "support_phone": "ALTER TABLE vendors ADD COLUMN support_phone VARCHAR(30)",
     },
     "rides": {
+        "payment_status": "ALTER TABLE rides ADD COLUMN payment_status VARCHAR(40) NOT NULL DEFAULT 'pending'",
+        "payment_reference": "ALTER TABLE rides ADD COLUMN payment_reference VARCHAR(120)",
+        "estimated_distance_km": "ALTER TABLE rides ADD COLUMN estimated_distance_km FLOAT",
+        "estimated_duration_minutes": "ALTER TABLE rides ADD COLUMN estimated_duration_minutes FLOAT",
+        "base_fare": "ALTER TABLE rides ADD COLUMN base_fare FLOAT",
+        "distance_fare": "ALTER TABLE rides ADD COLUMN distance_fare FLOAT",
+        "time_fare": "ALTER TABLE rides ADD COLUMN time_fare FLOAT",
+        "service_fee": "ALTER TABLE rides ADD COLUMN service_fee FLOAT",
+        "booking_fee": "ALTER TABLE rides ADD COLUMN booking_fee FLOAT",
+        "discount": "ALTER TABLE rides ADD COLUMN discount FLOAT",
+        "surge_multiplier": "ALTER TABLE rides ADD COLUMN surge_multiplier FLOAT",
         "rider_id": "ALTER TABLE rides ADD COLUMN rider_id INTEGER",
         "pickup_latitude": "ALTER TABLE rides ADD COLUMN pickup_latitude FLOAT NOT NULL DEFAULT 0",
         "pickup_longitude": "ALTER TABLE rides ADD COLUMN pickup_longitude FLOAT NOT NULL DEFAULT 0",
@@ -111,11 +123,20 @@ SQLITE_MIGRATIONS = {
 }
 
 SQLITE_MIGRATIONS["delivery_settings"] = {
+    "base_fare": "ALTER TABLE delivery_settings ADD COLUMN base_fare FLOAT NOT NULL DEFAULT 0",
+    "per_km": "ALTER TABLE delivery_settings ADD COLUMN per_km FLOAT NOT NULL DEFAULT 0",
+    "per_minute": "ALTER TABLE delivery_settings ADD COLUMN per_minute FLOAT NOT NULL DEFAULT 0",
+    "minimum_fare": "ALTER TABLE delivery_settings ADD COLUMN minimum_fare FLOAT NOT NULL DEFAULT 0",
+    "service_fee": "ALTER TABLE delivery_settings ADD COLUMN service_fee FLOAT NOT NULL DEFAULT 0",
+    "booking_fee": "ALTER TABLE delivery_settings ADD COLUMN booking_fee FLOAT NOT NULL DEFAULT 0",
+    "surge_multiplier": "ALTER TABLE delivery_settings ADD COLUMN surge_multiplier FLOAT NOT NULL DEFAULT 1",
+    "priority_surcharge": "ALTER TABLE delivery_settings ADD COLUMN priority_surcharge FLOAT NOT NULL DEFAULT 0",
     "bike_surcharge": "ALTER TABLE delivery_settings ADD COLUMN bike_surcharge FLOAT NOT NULL DEFAULT 0",
     "car_surcharge": "ALTER TABLE delivery_settings ADD COLUMN car_surcharge FLOAT NOT NULL DEFAULT 0",
     "xl_surcharge": "ALTER TABLE delivery_settings ADD COLUMN xl_surcharge FLOAT NOT NULL DEFAULT 0",
     "rider_payout_percentage": "ALTER TABLE delivery_settings ADD COLUMN rider_payout_percentage FLOAT NOT NULL DEFAULT 30",
 }
+SQLITE_MIGRATIONS["orders"]["delivery_speed"] = "ALTER TABLE orders ADD COLUMN delivery_speed VARCHAR(20) NOT NULL DEFAULT 'standard'"
 
 logger = logging.getLogger("quickdrop.api")
 if not logger.handlers:

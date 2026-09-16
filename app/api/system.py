@@ -180,6 +180,13 @@ async def update_admin_delivery_settings(
     settings.base_fee = payload.base_fee
     settings.fee_per_km = payload.fee_per_km
     settings.free_distance_km = payload.free_distance_km
+    settings.base_fare = payload.base_fare
+    settings.per_km = payload.per_km
+    settings.per_minute = payload.per_minute
+    settings.minimum_fare = payload.minimum_fare
+    settings.service_fee = payload.service_fee
+    settings.booking_fee = payload.booking_fee
+    settings.surge_multiplier = payload.surge_multiplier
     settings.bike_surcharge = payload.bike_surcharge
     settings.car_surcharge = payload.car_surcharge
     settings.xl_surcharge = payload.xl_surcharge

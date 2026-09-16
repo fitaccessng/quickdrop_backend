@@ -30,6 +30,7 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(SQLEnum(OrderStatus), default=OrderStatus.pending, index=True)
     subtotal_amount: Mapped[float] = mapped_column(Float)
     delivery_fee: Mapped[float] = mapped_column(Float, default=0)
+    delivery_speed: Mapped[str] = mapped_column(String(20), default="standard")
     total_amount: Mapped[float] = mapped_column(Float)
     payment_method: Mapped[str] = mapped_column(String(50))
     payment_status: Mapped[str] = mapped_column(String(50), default="pending")

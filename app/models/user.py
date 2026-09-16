@@ -35,6 +35,7 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    password_reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     addresses = relationship("Address", back_populates="user", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="user", foreign_keys="Order.user_id")

@@ -47,6 +47,20 @@ class VendorPromotionCreateRequest(BaseModel):
     ends_at: Optional[datetime] = None
 
 
+class VendorPromotionUpdateRequest(BaseModel):
+    product_id: Optional[int] = Field(default=None, ge=1)
+    promo_type: Optional[str] = Field(default=None, min_length=3, max_length=50)
+    title: Optional[str] = Field(default=None, min_length=3, max_length=160)
+    description: Optional[str] = Field(default=None, min_length=5, max_length=1000)
+    discount_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+
+
+class VendorPromotionStatusRequest(BaseModel):
+    status: str = Field(pattern="^(active|inactive)$")
+
+
 class VendorSummary(BaseModel):
     id: int
     name: str
@@ -144,12 +158,17 @@ class VendorTopProductPoint(BaseModel):
 
 class VendorAnalyticsResponse(BaseModel):
     total_revenue: float
+    daily_revenue: float
     total_orders: int
     active_products: int
+    total_products: int
+    out_of_stock_products: int
     low_stock_count: int
     average_order_value: float
     pending_orders: int
+    active_orders: int
     completed_orders: int
+    cancelled_orders: int
     monthly_revenue: list[VendorRevenuePoint]
     status_breakdown: list[VendorStatusPoint]
     top_products: list[VendorTopProductPoint]

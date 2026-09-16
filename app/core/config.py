@@ -6,6 +6,10 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SERVER_ROOT = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     app_name: str = "QuickDrop API"
     database_url: str = "sqlite+aiosqlite:///./quickdrop.db"
@@ -16,6 +20,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     paystack_secret_key: str = ""
     paystack_public_key: str = ""
+    openrouteservice_api_key: str = ""
     
     # Google OAuth
     google_client_id: str = ""
@@ -78,7 +83,18 @@ class Settings(BaseSettings):
             return [str(item).strip().rstrip("/") for item in value if str(item).strip()]
         return value
 
-    model_config = SettingsConfigDict(env_file=(".env.local", ".env"), env_file_encoding="utf-8", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=(
+            str(PROJECT_ROOT / ".env.local"),
+            str(PROJECT_ROOT / ".env"),
+            str(SERVER_ROOT / ".env.local"),
+            str(SERVER_ROOT / ".env"),
+            ".env.local",
+            ".env",
+        ),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
 
 settings = Settings()

@@ -27,7 +27,13 @@ def create_access_token(subject: str, account_type: str = "user") -> str:
 
 def create_password_reset_token(subject: str, account_type: str = "user", expires_minutes: int = 60) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
-    payload = {"sub": subject, "type": account_type, "purpose": "password_reset", "exp": expire}
+    payload = {
+        "sub": subject,
+        "type": account_type,
+        "purpose": "password_reset",
+        "iat": datetime.now(timezone.utc),
+        "exp": expire,
+    }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 

@@ -55,6 +55,7 @@ class AuthUser(BaseModel):
     full_name: str
     email: EmailStr
     phone: Optional[str] = None
+    role: Optional[str] = None
 
     class Config:
         from_attributes = True

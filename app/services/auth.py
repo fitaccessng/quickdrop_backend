@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Union
 import jwt
@@ -129,7 +130,14 @@ async def reset_user_password(session: AsyncSession, payload: ResetPasswordReque
     if not user or not user.is_active:
         raise ValueError("User not found")
 
+    issued_at = token_payload.get("iat")
+    if user.password_reset_at and issued_at:
+        issued_datetime = datetime.fromtimestamp(float(issued_at), tz=timezone.utc)
+        if issued_datetime <= user.password_reset_at.replace(tzinfo=timezone.utc):
+            raise ValueError("Invalid or expired reset token")
+
     user.hashed_password = hash_password(payload.password)
+    user.password_reset_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(user)
     return user

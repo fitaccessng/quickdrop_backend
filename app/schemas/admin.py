@@ -19,7 +19,6 @@ class AdminSummaryResponse(BaseModel):
     payout_requests_pending: int
     recent_payout_requests: list[PayoutRequestResponse]
 
-
 class AdminVendorItem(BaseModel):
     id: int
     name: str
@@ -27,6 +26,7 @@ class AdminVendorItem(BaseModel):
     phone: Optional[str] = None
     category: str
     city: str
+    is_active: bool
     is_onboarded: bool
     is_approved: bool
     created_at: datetime
@@ -166,6 +166,44 @@ class AdminAssignRiderRequest(BaseModel):
     rider_id: int
 
 
+class AdminAccountStatusUpdateRequest(BaseModel):
+    status: str
+
+
+class AdminOrderStatusUpdateRequest(BaseModel):
+    status: str
+
+
+class AdminPaymentTransactionResponse(BaseModel):
+    id: int
+    payment_reference: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    order_id: Optional[int] = None
+    ride_id: Optional[str] = None
+    amount: float = 0
+    currency: str = "ZAR"
+    payment_provider: str = "paystack"
+    payment_status: str = "pending"
+    payment_method: str = "unknown"
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    refund_status: Optional[str] = None
+
+
+class AdminRevenueSummaryResponse(BaseModel):
+    gross_revenue: float = 0
+    platform_revenue: float = 0
+    platform_fees: float = 0
+    delivery_fees: float = 0
+    rider_earnings: float = 0
+    vendor_earnings: float = 0
+    completed_transaction_count: int = 0
+    refunded_amount: float = 0
+    pending_amount: float = 0
+    completed_payment_amount: float = 0
+
+
 class AdminProfileResponse(BaseModel):
     id: int
     full_name: str
@@ -214,6 +252,14 @@ class DeliveryPricingSettingsResponse(BaseModel):
     base_fee: float
     fee_per_km: float
     free_distance_km: float
+    base_fare: float = 0
+    per_km: float = 0
+    per_minute: float = 0
+    minimum_fare: float = 0
+    service_fee: float = 0
+    booking_fee: float = 0
+    surge_multiplier: float = 1
+    priority_surcharge: float = 0
     bike_surcharge: float
     car_surcharge: float
     xl_surcharge: float
@@ -227,6 +273,14 @@ class DeliveryPricingSettingsUpdateRequest(BaseModel):
     base_fee: float
     fee_per_km: float
     free_distance_km: float = 0
+    base_fare: float = 0
+    per_km: float = 0
+    per_minute: float = 0
+    minimum_fare: float = 0
+    service_fee: float = 0
+    booking_fee: float = 0
+    surge_multiplier: float = 1
+    priority_surcharge: float = 0
     bike_surcharge: float = 0
     car_surcharge: float = 0
     xl_surcharge: float = 0

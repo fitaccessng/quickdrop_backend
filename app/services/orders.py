@@ -16,7 +16,8 @@ from app.models.delivery_setting import DeliverySetting
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.vendor import Vendor
-from app.schemas.order import CheckoutQuoteItem, CheckoutQuoteResponse, CheckoutRequest, OrderStatusResponse
+from app.core.config import settings as app_settings
+from app.schemas.order import CheckoutQuoteItem, CheckoutQuoteResponse, CheckoutRequest, OrderStatusResponse, DeliverySpeed
 
 ORDER_STATUS_TIMELINES = {
     OrderStatus.pending: ["Checkout received", "Vendor confirmation pending"],
@@ -59,16 +60,6 @@ def _haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -
     return 2 * radius_km * asin(sqrt(arc))
 
 
-def _build_straight_line_route(start_lat: float, start_lon: float, end_lat: float, end_lon: float) -> dict:
-    distance_km = _haversine_distance_km(start_lat, start_lon, end_lat, end_lon)
-    duration_seconds = max(60, int((distance_km / 28) * 3600))
-    return {
-        "distance_meters": round(distance_km * 1000, 2),
-        "duration_seconds": float(duration_seconds),
-        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
-    }
-
-
 def _load_cached_route(cache_key: tuple[float, float, float, float]) -> Optional[dict]:
     cached = _ROUTE_CACHE.get(cache_key)
     if not cached:
@@ -101,12 +92,9 @@ async def get_route_snapshot(
     if cached:
         return cached
 
-    api_key = os.getenv(
-        "OPENROUTESERVICE_API_KEY",
-        "5b3ce3597851110001cf6248b6f167f4c7e34c6d9e11bd7b92d4355a",
-    ).strip()
+    api_key = app_settings.openrouteservice_api_key.strip()
     if not api_key:
-        return _save_cached_route(cache_key, _build_straight_line_route(start_lat, start_lon, end_lat, end_lon))
+        raise HTTPException(status_code=503, detail="Routing service is not configured")
 
     def _request_route() -> dict:
         response = requests.get(
@@ -136,8 +124,19 @@ async def get_route_snapshot(
     try:
         payload = await asyncio.to_thread(_request_route)
         return _save_cached_route(cache_key, payload)
-    except Exception:
-        return _save_cached_route(cache_key, _build_straight_line_route(start_lat, start_lon, end_lat, end_lon))
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 502
+        detail = "Unable to fetch route right now"
+        try:
+            payload = exc.response.json() if exc.response is not None else {}
+            detail = payload.get("error", {}).get("message") or payload.get("message") or detail
+        except Exception:
+            pass
+        raise HTTPException(status_code=502 if status_code >= 500 else status_code, detail=detail) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Unable to reach routing service") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Routing service returned incomplete route data") from exc
 
 
 async def build_order_tracking_snapshot(order: Order) -> dict:
@@ -198,7 +197,7 @@ async def _get_delivery_settings(session: AsyncSession) -> DeliverySetting:
     return settings
 
 
-def _calculate_delivery_fee(vendor: Vendor, address: Address, settings: DeliverySetting) -> tuple[float, float]:
+def _calculate_delivery_fee(vendor: Vendor, address: Address, settings: DeliverySetting, delivery_speed: str) -> tuple[float, float]:
     distance_km = 0.0
     if (
         vendor.latitude is not None
@@ -210,6 +209,8 @@ def _calculate_delivery_fee(vendor: Vendor, address: Address, settings: Delivery
 
     billable_distance = max(distance_km - float(settings.free_distance_km or 0), 0)
     delivery_fee = float(settings.base_fee or 0) + billable_distance * float(settings.fee_per_km or 0)
+    if delivery_speed == "priority":
+        delivery_fee += float(settings.priority_surcharge or 0)
     return round(delivery_fee, 2), round(distance_km, 2)
 
 
@@ -260,7 +261,7 @@ async def build_checkout_quote(
         if subtotal < vendor.minimum_order_amount:
             raise ValueError(f"{vendor.name} requires a minimum order of {vendor.minimum_order_amount:.2f}")
 
-        delivery_fee, distance_km = _calculate_delivery_fee(vendor, address, settings)
+        delivery_fee, distance_km = _calculate_delivery_fee(vendor, address, settings, payload.delivery_speed.value)
         subtotal_amount += subtotal
         delivery_fee_total += delivery_fee
         quote_items.append(
@@ -278,6 +279,7 @@ async def build_checkout_quote(
         subtotal_amount=round(subtotal_amount, 2),
         delivery_fee=round(delivery_fee_total, 2),
         total_amount=round(subtotal_amount + delivery_fee_total, 2),
+        delivery_speed=payload.delivery_speed,
         items=quote_items,
     )
 
@@ -296,7 +298,7 @@ async def create_checkout(session: AsyncSession, user_id: int, payload: Checkout
         subtotal = sum(product.price * quantity for product, quantity, _ in vendor_items)
         if subtotal < vendor.minimum_order_amount:
             raise ValueError(f"{vendor.name} requires a minimum order of {vendor.minimum_order_amount:.2f}")
-        delivery_fee, _distance_km = _calculate_delivery_fee(vendor, address, settings)
+        delivery_fee, _distance_km = _calculate_delivery_fee(vendor, address, settings, payload.delivery_speed.value)
         payment_method = payload.payment_method
         is_paystack_payment = payment_method == "paystack"
         is_cash_payment = payment_method == "cash_on_delivery"
@@ -314,6 +316,7 @@ async def create_checkout(session: AsyncSession, user_id: int, payload: Checkout
             subtotal_amount=subtotal,
             delivery_fee=delivery_fee,
             total_amount=subtotal + delivery_fee,
+            delivery_speed=payload.delivery_speed.value,
             payment_method=payment_method,
             payment_status=payment_status if not is_cash_payment else "pending",
             payment_reference=payment_reference,
@@ -409,6 +412,7 @@ async def build_order_status_response(session: AsyncSession, order_id: int) -> O
         order_reference=order.order_reference,
         status=order.status,
         tracking_note=order.tracking_note,
+        delivery_speed=order.delivery_speed,
         updated_at=order.updated_at,
         timeline=build_timeline(order.status),
         rider=order.rider,

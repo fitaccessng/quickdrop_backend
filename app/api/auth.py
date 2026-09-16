@@ -79,7 +79,12 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_se
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
-    return AuthResponse(access_token=create_access_token(str(user.id), "user"), user=user)
+    account_type = "rider" if user.role == "rider" else "user"
+    return AuthResponse(
+        access_token=create_access_token(str(user.id), account_type),
+        account_type=account_type,
+        user=user,
+    )
 
 
 @router.post("/unified-login", response_model=UnifiedAuthResponse)
@@ -124,7 +129,12 @@ async def reset_password(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return AuthResponse(access_token=create_access_token(str(user.id), "user"), user=user)
+    account_type = "rider" if user.role == "rider" else "user"
+    return AuthResponse(
+        access_token=create_access_token(str(user.id), account_type),
+        account_type=account_type,
+        user=user,
+    )
 
 
 @router.post("/vendor/register", response_model=VendorAuthResponse, status_code=status.HTTP_201_CREATED)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_rider, get_current_user, get_db_session
@@ -22,6 +22,7 @@ from app.schemas.ride import (
     RideStatusResponse,
     RideStatusUpdateRequest,
 )
+from app.schemas.order import CheckoutInitializationResponse
 from app.services.ride_realtime import ride_realtime_manager
 from app.services.notifications import create_notification
 from app.services.rides import (
@@ -37,12 +38,13 @@ from app.services.rides import (
     get_ride_for_actor,
     get_rider_dispatch_queue,
     handle_rider_response,
-    quote_ride,
     record_rider_location,
     serialize_admin_snapshot,
     serialize_ride,
     update_ride_status,
 )
+from app.services.paystack import initialize_paystack_transaction
+from uuid import uuid4
 
 router = APIRouter(prefix="/rides", tags=["rides"])
 
@@ -75,7 +77,16 @@ async def quote_customer_ride(
     db_session: AsyncSession = Depends(get_db_session),
 ) -> RideQuoteResponse:
     settings = await get_delivery_settings(db_session)
-    return build_quote(payload, settings)
+    return await build_quote(payload, settings)
+
+
+@router.post("/fare-estimate", response_model=RideQuoteResponse)
+async def estimate_customer_ride_fare(
+    payload: RideQuoteRequest,
+    db_session: AsyncSession = Depends(get_db_session),
+) -> RideQuoteResponse:
+    settings = await get_delivery_settings(db_session)
+    return await build_quote(payload, settings)
 
 
 @router.post("", response_model=RideResponse)
@@ -111,6 +122,42 @@ async def request_ride_alias(
     db_session: AsyncSession = Depends(get_db_session),
 ) -> RideResponse:
     return await request_ride(payload, current_user, db_session)
+
+
+@router.post("/{ride_id}/paystack/initialize", response_model=CheckoutInitializationResponse)
+async def initialize_ride_payment(
+    ride_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+) -> CheckoutInitializationResponse:
+    ride = await get_ride_by_customer(ride_id, current_user.id, db_session)
+    if ride.payment_status == "paid":
+        raise HTTPException(status_code=409, detail="Ride is already paid")
+    reference = f"QD-RIDE-{uuid4().hex[:18].upper()}"
+    callback_url = str(request.url_for("paystack_callback"))
+    try:
+        initialized = await initialize_paystack_transaction({
+            "email": current_user.email,
+            "amount": str(int(round(float(ride.price) * 100))),
+            "currency": ride.currency,
+            "reference": reference,
+            "callback_url": callback_url,
+            "metadata": {"quickdrop_user_id": current_user.id, "quickdrop_ride_id": ride.id},
+        })
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Unable to initialize ride payment right now.") from exc
+
+    ride.payment_reference = initialized["reference"]
+    ride.payment_status = "pending"
+    await db_session.commit()
+    return CheckoutInitializationResponse(
+        authorization_url=initialized["authorization_url"],
+        access_code=initialized["access_code"],
+        reference=initialized["reference"],
+    )
 
 
 @router.get("/active/current", response_model=Optional[RideStatusResponse])

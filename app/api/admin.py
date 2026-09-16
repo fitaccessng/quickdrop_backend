@@ -1,24 +1,30 @@
 from collections import defaultdict
+from datetime import datetime, timezone
 from statistics import mean
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin, get_db_session
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.payout_request import PayoutRequest
+from app.models.ride import Ride
 from app.models.user import User
 from app.models.vendor import Vendor, VendorPromotion
 from app.models.product import Product, ProductReview
 from app.schemas.admin import (
+    AdminAccountStatusUpdateRequest,
     AdminProductReviewUpdateRequest,
     AdminAssignRiderRequest,
     AdminOrderItem,
+    AdminOrderStatusUpdateRequest,
+    AdminPaymentTransactionResponse,
     AdminProfileResponse,
     AdminProfileUpdateRequest,
+    AdminRevenueSummaryResponse,
     AdminSummaryResponse,
     AdminUserDetailResponse,
     AdminUserItem,
@@ -35,6 +41,25 @@ from app.services.orders import build_order_tracking_snapshot
 from app.api.orders import broadcast_order_state
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _normalize_admin_status(value: str) -> str:
+    status_value = (value or "").strip().lower()
+    if status_value not in {"active", "inactive", "suspended"}:
+        raise HTTPException(status_code=400, detail="Status must be one of: active, inactive, suspended")
+    return status_value
+
+
+def _parse_admin_datetime(value: Optional[str], *, field_name: str, is_end: bool = False) -> Optional[datetime]:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name} timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc) if is_end else parsed.astimezone(timezone.utc)
 
 
 async def serialize_order(order: Order) -> AdminOrderItem:
@@ -263,12 +288,17 @@ async def get_admin_vendor_analytics(
     )
 
 
-@router.get("/orders", response_model=list[AdminOrderItem])
+@router.get("/orders")
 async def get_admin_orders(
     status: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     session: AsyncSession = Depends(get_db_session),
     _: User = Depends(get_current_admin),
-) -> list[AdminOrderItem]:
+):
     query = select(Order).options(
         selectinload(Order.vendor),
         selectinload(Order.user),
@@ -278,8 +308,91 @@ async def get_admin_orders(
     )
     if status and status != "all":
         query = query.where(Order.status == status)
-    result = await session.execute(query.order_by(Order.updated_at.desc()))
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Order.order_reference.ilike(pattern),
+                Order.payment_reference.ilike(pattern),
+                Order.user.has(User.full_name.ilike(pattern)),
+                Order.user.has(User.email.ilike(pattern)),
+                Order.user.has(User.phone.ilike(pattern)),
+                Order.vendor.has(Vendor.name.ilike(pattern)),
+                Order.rider.has(User.full_name.ilike(pattern)),
+            )
+        )
+    start_dt = _parse_admin_datetime(start_date, field_name="start_date") if start_date else None
+    end_dt = _parse_admin_datetime(end_date, field_name="end_date") if end_date else None
+    if start_dt:
+        query = query.where(Order.created_at >= start_dt)
+    if end_dt:
+        query = query.where(Order.created_at <= end_dt)
+    query = query.order_by(Order.updated_at.desc())
+
+    if page is not None or page_size is not None:
+        page_number = max(1, int(page or 1))
+        page_size_value = max(1, min(100, int(page_size or 20)))
+        total_query = select(func.count()).select_from(query.order_by(None).subquery())
+        total = await session.scalar(total_query)
+        paginated = query.offset((page_number - 1) * page_size_value).limit(page_size_value)
+        result = await session.execute(paginated)
+        items = [await serialize_order(order) for order in result.scalars().all()]
+        total_pages = max(1, (total + page_size_value - 1) // page_size_value) if total else 1
+        return {
+            "items": items,
+            "page": page_number,
+            "page_size": page_size_value,
+            "total": total or 0,
+            "total_pages": total_pages,
+            "has_next": page_number < total_pages,
+            "has_previous": page_number > 1,
+        }
+
+    result = await session.execute(query)
     return [await serialize_order(order) for order in result.scalars().all()]
+
+
+@router.patch("/orders/{order_id}/status", response_model=AdminOrderItem)
+async def update_admin_order_status(
+    order_id: int,
+    payload: AdminOrderStatusUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_admin),
+) -> AdminOrderItem:
+    order = await session.scalar(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(
+            selectinload(Order.vendor),
+            selectinload(Order.user),
+            selectinload(Order.rider),
+            selectinload(Order.address),
+            selectinload(Order.items).selectinload(OrderItem.product),
+        )
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    target_status = payload.status.strip().lower()
+    if target_status not in {status.value for status in OrderStatus}:
+        raise HTTPException(status_code=400, detail="Invalid order status")
+
+    allowed_transitions = {
+        OrderStatus.pending: {OrderStatus.confirmed, OrderStatus.cancelled},
+        OrderStatus.confirmed: {OrderStatus.preparing, OrderStatus.cancelled},
+        OrderStatus.preparing: {OrderStatus.rider_assigned, OrderStatus.cancelled},
+        OrderStatus.rider_assigned: {OrderStatus.on_the_way, OrderStatus.cancelled},
+        OrderStatus.on_the_way: {OrderStatus.delivered, OrderStatus.cancelled},
+        OrderStatus.delivered: set(),
+        OrderStatus.cancelled: set(),
+    }
+    target_enum = OrderStatus(target_status)
+    if target_enum not in allowed_transitions.get(order.status, set()):
+        raise HTTPException(status_code=409, detail=f"Cannot change order from {order.status.value} to {target_enum.value}")
+
+    order.status = target_enum
+    await session.commit()
+    await session.refresh(order)
+    return await serialize_order(order)
 
 
 @router.get("/orders/{order_id}", response_model=AdminOrderItem)
@@ -382,6 +495,40 @@ async def assign_rider_to_order(
     return await serialize_order(order)
 
 
+@router.patch("/customers/{user_id}/status", response_model=AdminUserItem)
+async def update_customer_status(
+    user_id: int,
+    payload: AdminAccountStatusUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_admin),
+) -> AdminUserItem:
+    user = await session.get(User, user_id)
+    if not user or user.role != "customer":
+        raise HTTPException(status_code=404, detail="Customer not found")
+    next_status = _normalize_admin_status(payload.status)
+    user.is_active = next_status == "active"
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.patch("/vendors/{vendor_id}/status", response_model=AdminVendorItem)
+async def update_vendor_status(
+    vendor_id: int,
+    payload: AdminAccountStatusUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_admin),
+) -> AdminVendorItem:
+    vendor = await session.get(Vendor, vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    next_status = _normalize_admin_status(payload.status)
+    vendor.is_active = next_status == "active"
+    await session.commit()
+    await session.refresh(vendor)
+    return vendor
+
+
 @router.get("/users", response_model=list[AdminUserItem])
 async def get_admin_users(
     role: Optional[str] = None,
@@ -468,6 +615,108 @@ async def get_admin_riders(
 ) -> list[AdminUserItem]:
     result = await session.execute(select(User).where(User.role == "rider").order_by(User.created_at.desc()))
     return list(result.scalars().all())
+
+
+@router.get("/payments", response_model=list[AdminPaymentTransactionResponse])
+async def get_admin_payments(
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_admin),
+) -> list[AdminPaymentTransactionResponse]:
+    orders = await session.execute(
+        select(Order)
+        .options(selectinload(Order.user), selectinload(Order.vendor), selectinload(Order.rider))
+        .order_by(Order.created_at.desc())
+    )
+    ride_rows = await session.execute(
+        select(Ride)
+        .options(selectinload(Ride.user), selectinload(Ride.rider))
+        .order_by(Ride.created_at.desc())
+    )
+    records: list[AdminPaymentTransactionResponse] = []
+    for order in orders.scalars().all():
+        if not (order.payment_reference or order.total_amount or order.payment_status):
+            continue
+        records.append(
+            AdminPaymentTransactionResponse(
+                id=order.id,
+                payment_reference=order.payment_reference,
+                customer_name=order.user.full_name if order.user else None,
+                customer_email=order.user.email if order.user else None,
+                order_id=order.id,
+                ride_id=None,
+                amount=float(order.total_amount or 0),
+                currency="ZAR",
+                payment_provider="paystack" if bool(order.payment_reference) else "cash_on_delivery",
+                payment_status=order.payment_status or "pending",
+                payment_method=order.payment_method or "unknown",
+                created_at=order.created_at,
+                completed_at=order.updated_at if order.payment_status == "paid" else None,
+                refund_status=None,
+            )
+        )
+    for ride in ride_rows.scalars().all():
+        if not ride.payment_reference and ride.payment_status == "pending" and ride.price == 0:
+            continue
+        records.append(
+            AdminPaymentTransactionResponse(
+                id=ride.id.__hash__(),
+                payment_reference=ride.payment_reference,
+                customer_name=ride.user.full_name if ride.user else None,
+                customer_email=ride.user.email if ride.user else None,
+                order_id=None,
+                ride_id=ride.id,
+                amount=float(ride.price or 0),
+                currency=ride.currency or "ZAR",
+                payment_provider="paystack" if bool(ride.payment_reference) else "cash",
+                payment_status=ride.payment_status or "pending",
+                payment_method="ride-payment",
+                created_at=ride.created_at,
+                completed_at=ride.completed_at or ride.updated_at,
+                refund_status=None,
+            )
+        )
+    records.sort(key=lambda item: item.created_at, reverse=True)
+    return records
+
+
+@router.get("/revenue", response_model=AdminRevenueSummaryResponse)
+async def get_admin_revenue(
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_admin),
+) -> AdminRevenueSummaryResponse:
+    order_result = await session.execute(
+        select(Order).order_by(Order.created_at.desc())
+    )
+    orders = list(order_result.scalars().all())
+    ride_result = await session.execute(
+        select(Ride).order_by(Ride.created_at.desc())
+    )
+    rides = list(ride_result.scalars().all())
+
+    gross_revenue = float(sum(order.total_amount for order in orders))
+    paid_orders = [order for order in orders if order.payment_status == "paid"]
+    pending_orders = [order for order in orders if order.payment_status == "pending"]
+    completed_transaction_count = len(paid_orders)
+    platform_fees = float(sum(order.delivery_fee for order in paid_orders))
+    delivery_fees = platform_fees
+    rider_earnings = float(sum(ride.rider_payout_amount or 0 for ride in rides if ride.rider_payout_amount is not None))
+    vendor_earnings = float(sum(order.total_amount for order in orders if order.status == OrderStatus.delivered))
+    completed_payment_amount = float(sum(order.total_amount for order in paid_orders))
+    pending_amount = float(sum(order.total_amount for order in pending_orders))
+    refunded_amount = 0.0
+
+    return AdminRevenueSummaryResponse(
+        gross_revenue=gross_revenue,
+        platform_revenue=platform_fees,
+        platform_fees=platform_fees,
+        delivery_fees=delivery_fees,
+        rider_earnings=rider_earnings,
+        vendor_earnings=vendor_earnings,
+        completed_transaction_count=completed_transaction_count,
+        refunded_amount=refunded_amount,
+        pending_amount=pending_amount,
+        completed_payment_amount=completed_payment_amount,
+    )
 
 
 @router.get("/payout-requests", response_model=list[PayoutRequestResponse])

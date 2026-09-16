@@ -25,6 +25,7 @@ from app.schemas.ride import (
     RideRequestSchema,
     RideStatusResponse,
 )
+from app.services.fare_service import calculate_fare, fetch_real_route
 
 RIDE_OPTIONS = (
     selectinload(Ride.user),
@@ -89,54 +90,22 @@ def get_vehicle_surcharge(settings: DeliverySetting, vehicle_type: str) -> float
     }.get(vehicle_type, 0.0)
 
 
-def build_route_preview(
-    pickup: RidePoint,
-    dropoff: RidePoint,
-    geometry: Optional[list[list[float]]] = None,
-) -> list[list[float]]:
-    if geometry:
-        return geometry
-    return [
-        [pickup.longitude, pickup.latitude],
-        [dropoff.longitude, dropoff.latitude],
-    ]
-
-
-def build_quote(payload: RideQuoteRequest, settings: DeliverySetting) -> RideQuoteResponse:
-    distance = haversine_distance_meters(
-        payload.pickup.latitude,
-        payload.pickup.longitude,
-        payload.dropoff.latitude,
-        payload.dropoff.longitude,
-    )
-    duration = estimate_duration_seconds(distance, payload.vehicle_type)
-    distance_km = distance / 1000
-    billable_distance = max(distance_km - float(settings.free_distance_km or 0), 0)
-    surcharge = get_vehicle_surcharge(settings, payload.vehicle_type)
-    fare = float(settings.base_fee or 0) + (billable_distance * float(settings.fee_per_km or 0)) + surcharge
-    eta = max(180, int(duration * VEHICLE_ETA_MULTIPLIERS.get(payload.vehicle_type, 1.0)))
-
+async def build_quote(payload: RideQuoteRequest, settings: DeliverySetting) -> RideQuoteResponse:
+    route = await fetch_real_route(payload.pickup, payload.dropoff)
+    fare = calculate_fare(route, settings, payload.vehicle_type)
+    duration = int(route["duration_seconds"])
     return RideQuoteResponse(
         vehicle_type=payload.vehicle_type,
-        currency="ZAR",
-        distance_meters=round(distance, 2),
+        currency=fare["currency"],
+        distance_meters=round(route["distance_meters"], 2),
         duration_seconds=duration,
-        estimated_fare=round(fare, 2),
-        eta_seconds=eta,
+        estimated_fare=fare["total"],
+        eta_seconds=max(180, int(duration * VEHICLE_ETA_MULTIPLIERS.get(payload.vehicle_type, 1.0))),
+        distance_km=fare["distance_km"],
+        duration_minutes=fare["duration_minutes"],
+        fare={key: value for key, value in fare.items() if key not in {"currency", "distance_km", "duration_minutes"}},
+        route_geometry=route["coordinates"],
     )
-
-
-def quote_ride(payload: RideQuoteRequest) -> RideQuoteResponse:
-    settings = DeliverySetting(
-        base_fee=0,
-        fee_per_km=0,
-        free_distance_km=0,
-        bike_surcharge=180,
-        car_surcharge=260,
-        xl_surcharge=360,
-        rider_payout_percentage=30,
-    )
-    return build_quote(payload, settings)
 
 
 def serialize_participant(user: Optional[User], *, rating: Optional[float] = None) -> Optional[RideParticipant]:
@@ -161,7 +130,7 @@ def serialize_admin_rider(user: User) -> AdminRiderSnapshot:
         vehicle_type=user.vehicle_type,
         plate_number=user.license_number,
         avatar_url=user.avatar_url,
-        rating=4.9,
+        rating=None,
         rider_status=user.rider_status,
         current_latitude=user.current_latitude,
         current_longitude=user.current_longitude,
@@ -200,8 +169,19 @@ def serialize_ride(ride: Ride) -> RideStatusResponse:
         currency=ride.currency,
         price=ride.price,
         final_price=ride.final_price,
+        payment_status=ride.payment_status,
+        payment_reference=ride.payment_reference,
         rider_payout_amount=ride.rider_payout_amount,
         rider_payout_percentage=ride.rider_payout_percentage,
+        estimated_distance_km=ride.estimated_distance_km,
+        estimated_duration_minutes=ride.estimated_duration_minutes,
+        base_fare=ride.base_fare,
+        distance_fare=ride.distance_fare,
+        time_fare=ride.time_fare,
+        service_fee=ride.service_fee,
+        booking_fee=ride.booking_fee,
+        discount=ride.discount,
+        surge_multiplier=ride.surge_multiplier,
         pickup=RidePoint(
             latitude=ride.pickup_latitude,
             longitude=ride.pickup_longitude,
@@ -216,12 +196,9 @@ def serialize_ride(ride: Ride) -> RideStatusResponse:
         duration_seconds=ride.duration_seconds,
         estimated_arrival_seconds=ride.estimated_arrival_seconds,
         tracking_note=ride.tracking_note,
-        route_geometry=ride.route_geometry or build_route_preview(
-            RidePoint(latitude=ride.pickup_latitude, longitude=ride.pickup_longitude, address=ride.pickup_location),
-            RidePoint(latitude=ride.dropoff_latitude, longitude=ride.dropoff_longitude, address=ride.dropoff_location),
-        ),
+        route_geometry=ride.route_geometry or [],
         customer=serialize_participant(ride.user),
-        rider=serialize_participant(ride.rider, rating=4.9 if ride.rider else None),
+        rider=serialize_participant(ride.rider),
         rider_location=serialize_location(rider_location),
         recent_locations=[serialize_location(item) for item in recent_events if item],
         created_at=ride.created_at,
@@ -240,6 +217,15 @@ def serialize_admin_snapshot(ride: Ride) -> RideAdminSnapshot:
         pickup=serialized.pickup,
         dropoff=serialized.dropoff,
         estimated_arrival_seconds=serialized.estimated_arrival_seconds,
+        estimated_distance_km=serialized.estimated_distance_km,
+        estimated_duration_minutes=serialized.estimated_duration_minutes,
+        base_fare=serialized.base_fare,
+        distance_fare=serialized.distance_fare,
+        time_fare=serialized.time_fare,
+        service_fee=serialized.service_fee,
+        booking_fee=serialized.booking_fee,
+        discount=serialized.discount,
+        surge_multiplier=serialized.surge_multiplier,
         customer_note=ride.customer_note,
         receiver_name=ride.receiver_name,
         receiver_phone=ride.receiver_phone,
@@ -279,29 +265,41 @@ async def find_nearest_available_rider(session: AsyncSession, ride_request: Ride
 
 async def create_ride_request(user_id: int, payload: RideRequestSchema, db_session: AsyncSession) -> Ride:
     settings = await get_delivery_settings(db_session)
-    quote = build_quote(payload, settings)
+    route = await fetch_real_route(payload.pickup, payload.dropoff)
+    fare = calculate_fare(route, settings, payload.vehicle_type)
+    duration = int(route["duration_seconds"])
+    estimated_fare = fare["total"]
     nearest_rider = await find_nearest_available_rider(db_session, payload)
     rider_payout_percentage = float(settings.rider_payout_percentage or 0)
-    rider_payout_amount = round((quote.estimated_fare * rider_payout_percentage) / 100, 2)
+    rider_payout_amount = round((estimated_fare * rider_payout_percentage) / 100, 2)
     ride = Ride(
         id=f"ride_{uuid.uuid4().hex[:12]}",
         user_id=user_id,
         rider_id=nearest_rider.id if nearest_rider else None,
         vehicle_type=payload.vehicle_type,
-        price=quote.estimated_fare,
-        currency=quote.currency,
+        price=estimated_fare,
+        currency=fare["currency"],
         pickup_location=payload.pickup.address,
         dropoff_location=payload.dropoff.address,
         pickup_latitude=payload.pickup.latitude,
         pickup_longitude=payload.pickup.longitude,
         dropoff_latitude=payload.dropoff.latitude,
         dropoff_longitude=payload.dropoff.longitude,
-        distance_meters=quote.distance_meters,
-        duration_seconds=quote.duration_seconds,
-        estimated_arrival_seconds=quote.eta_seconds,
+        distance_meters=round(route["distance_meters"], 2),
+        duration_seconds=duration,
+        estimated_arrival_seconds=max(180, int(duration * VEHICLE_ETA_MULTIPLIERS.get(payload.vehicle_type, 1.0))),
+        estimated_distance_km=fare["distance_km"],
+        estimated_duration_minutes=fare["duration_minutes"],
+        base_fare=fare["base_fare"],
+        distance_fare=fare["distance_fare"],
+        time_fare=fare["time_fare"],
+        service_fee=fare["service_fee"],
+        booking_fee=fare["booking_fee"],
+        discount=fare["discount"],
+        surge_multiplier=fare["surge_multiplier"],
         rider_payout_amount=rider_payout_amount,
         rider_payout_percentage=rider_payout_percentage,
-        route_geometry=build_route_preview(payload.pickup, payload.dropoff, payload.route_geometry),
+        route_geometry=route["coordinates"],
         status=RideStatus.searching.value,
         tracking_note="Searching for the nearest available rider.",
         customer_note=payload.customer_note,
@@ -344,6 +342,9 @@ async def get_current_active_ride_for_user(user_id: int, db_session: AsyncSessio
 
 
 async def get_rider_dispatch_queue(rider_id: int, db_session: AsyncSession) -> list[Ride]:
+    rider = await db_session.get(User, rider_id)
+    if not rider or not rider.is_active or not rider.is_onboarded or rider.rider_status not in {"available", "online"}:
+        return []
     result = await db_session.execute(
         select(Ride)
         .where(
@@ -368,6 +369,8 @@ async def assign_ride_to_rider(ride: Ride, rider: User, db_session: AsyncSession
 
 
 async def handle_rider_response(ride_id: str, rider: User, action: str, db_session: AsyncSession) -> Ride:
+    if not rider.is_active or not rider.is_onboarded or rider.rider_status not in {"available", "online"}:
+        raise HTTPException(status_code=409, detail="Rider must be onboarded and online before accepting rides")
     ride = await get_ride_for_actor(db_session, ride_id)
     if ride.rider_id not in {None, rider.id}:
         raise HTTPException(status_code=409, detail="Ride already offered to another rider")
@@ -412,6 +415,16 @@ async def update_ride_status(
     if ride.rider_id != rider.id:
         raise HTTPException(status_code=403, detail="Ride is not assigned to this rider")
 
+    allowed_transitions = {
+        RideStatus.accepted.value: {RideStatus.arriving.value, RideStatus.cancelled.value},
+        RideStatus.arriving.value: {RideStatus.on_trip.value, RideStatus.cancelled.value},
+        RideStatus.on_trip.value: {RideStatus.completed.value, RideStatus.cancelled.value},
+    }
+    if status == ride.status:
+        raise HTTPException(status_code=400, detail="Ride is already in that status")
+    if status not in allowed_transitions.get(ride.status, set()):
+        raise HTTPException(status_code=409, detail=f"Cannot change ride from {ride.status} to {status}")
+
     ride.status = status
     ride.tracking_note = tracking_note or {
         RideStatus.arriving.value: "Rider is arriving at the pickup point.",
@@ -427,6 +440,10 @@ async def update_ride_status(
     if status == RideStatus.completed.value:
         ride.completed_at = now
         ride.final_price = ride.price
+        payout_amount = float(ride.rider_payout_amount or 0)
+        rider.wallet_balance += payout_amount
+        rider.total_earnings += payout_amount
+        rider.total_deliveries += 1
         rider.rider_status = "available"
     elif status == RideStatus.cancelled.value:
         rider.rider_status = "available"

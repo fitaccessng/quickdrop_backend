@@ -2,13 +2,14 @@ import asyncio
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import requests
 
 from app.api.deps import get_current_rider, get_db_session
+from app.core.config import settings
 from app.models.delivery_setting import DeliverySetting
 from app.models.notification import Notification
 from app.models.order import Order, OrderItem, OrderStatus
@@ -354,6 +355,20 @@ async def update_rider_order(
     if not order:
         raise HTTPException(status_code=404, detail="Assigned order not found")
 
+    allowed_transitions = {
+        OrderStatus.rider_assigned: {OrderStatus.on_the_way, OrderStatus.cancelled},
+        OrderStatus.on_the_way: {OrderStatus.delivered, OrderStatus.cancelled},
+    }
+    if payload.status == order.status:
+        raise HTTPException(status_code=400, detail="Order is already in that status")
+    if payload.status not in allowed_transitions.get(order.status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot change order from {order.status.value} to {payload.status.value}",
+        )
+
+    previous_status = order.status
+
     order.status = payload.status
     if payload.tracking_note is not None:
         order.tracking_note = payload.tracking_note
@@ -362,7 +377,7 @@ async def update_rider_order(
     if payload.tracking_longitude is not None:
         order.tracking_longitude = payload.tracking_longitude
 
-    if payload.status == OrderStatus.delivered:
+    if previous_status == OrderStatus.on_the_way and payload.status == OrderStatus.delivered:
         payout_percentage = await _get_rider_payout_percentage(session)
         payout_amount = round((float(order.delivery_fee or 0) * payout_percentage) / 100, 2)
         current_rider.total_deliveries += 1
@@ -500,7 +515,7 @@ async def get_rider_tracking_order(
         select(Order)
         .where(
             Order.id == order_id,
-            or_(Order.rider_id == current_rider.id, Order.rider_id.is_(None)),
+            Order.rider_id == current_rider.id,
         )
         .options(*order_options)
     )
@@ -512,8 +527,8 @@ async def get_rider_tracking_order(
 @router.get("/orders/{order_id}/route", response_model=RiderRouteResponse)
 async def get_rider_order_route(
     order_id: int,
-    start_latitude: float,
-    start_longitude: float,
+    start_latitude: float = Query(..., ge=-90, le=90),
+    start_longitude: float = Query(..., ge=-180, le=180),
     session: AsyncSession = Depends(get_db_session),
     current_rider: User = Depends(get_current_rider),
 ) -> RiderRouteResponse:
@@ -521,7 +536,7 @@ async def get_rider_order_route(
         select(Order)
         .where(
             Order.id == order_id,
-            or_(Order.rider_id == current_rider.id, Order.rider_id.is_(None)),
+            Order.rider_id == current_rider.id,
         )
         .options(*order_options)
     )
@@ -530,10 +545,7 @@ async def get_rider_order_route(
     if order.address is None or order.address.latitude is None or order.address.longitude is None:
         raise HTTPException(status_code=400, detail="Order destination is unavailable")
 
-    api_key = os.getenv(
-        "OPENROUTESERVICE_API_KEY",
-        "5b3ce3597851110001cf6248b6f167f4c7e34c6d9e11bd7b92d4355a",
-    ).strip()
+    api_key = settings.openrouteservice_api_key.strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Routing service is not configured")
 

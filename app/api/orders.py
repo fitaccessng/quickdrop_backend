@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.security import decode_access_token
 from app.models.order import Order, OrderItem
 from app.models.order import OrderStatus
+from app.models.ride import Ride
 from app.models.user import User
 from app.models.vendor import Vendor
 from app.schemas.order import (
@@ -75,6 +76,7 @@ async def serialize_order(order) -> OrderResponse:
         status=order.status,
         subtotal_amount=order.subtotal_amount,
         delivery_fee=order.delivery_fee,
+        delivery_speed=order.delivery_speed,
         total_amount=order.total_amount,
         payment_method=order.payment_method,
         payment_status=order.payment_status,
@@ -118,6 +120,7 @@ async def serialize_vendor_order(order) -> VendorOrderResponse:
         status=order.status,
         subtotal_amount=order.subtotal_amount,
         delivery_fee=order.delivery_fee,
+        delivery_speed=order.delivery_speed,
         total_amount=order.total_amount,
         payment_method=order.payment_method,
         payment_status=order.payment_status,
@@ -228,6 +231,7 @@ async def _create_or_fetch_paystack_orders(
         address_longitude=checkout_payload.get("address_longitude"),
         payment_method="paystack",
         payment_reference=reference,
+        delivery_speed=checkout_payload.get("delivery_speed", "standard"),
         items=checkout_payload["items"],
     )
     quote = await build_checkout_quote(session, current_user.id, quote_payload)
@@ -238,6 +242,30 @@ async def _create_or_fetch_paystack_orders(
 
     _order_reference, created_orders = await create_checkout(session, current_user.id, quote_payload)
     return await _hydrate_checkout_response(session, created_orders, current_user)
+
+
+async def _verify_and_update_paystack_ride(
+    session: AsyncSession,
+    current_user: User,
+    verified_transaction: dict,
+) -> Ride:
+    metadata = verified_transaction.get("metadata") or {}
+    ride_id = metadata.get("quickdrop_ride_id")
+    if not ride_id or str(metadata.get("quickdrop_user_id")) != str(current_user.id):
+        raise ValueError("Paystack ride metadata is invalid.")
+    ride = await session.scalar(select(Ride).where(Ride.id == ride_id, Ride.user_id == current_user.id))
+    if not ride:
+        raise ValueError("Ride not found.")
+    expected_amount = int(round(float(ride.price) * 100))
+    paid_amount = int(verified_transaction.get("amount") or 0)
+    if paid_amount != expected_amount:
+        raise ValueError("Verified Paystack amount does not match the ride fare.")
+    if ride.payment_status != "paid":
+        ride.payment_status = "paid"
+        ride.payment_reference = verified_transaction.get("reference")
+        await session.commit()
+        await session.refresh(ride)
+    return ride
 
 
 @router.post("", response_model=CheckoutResponse, status_code=status.HTTP_201_CREATED)
@@ -309,6 +337,10 @@ async def paystack_callback(
         if not current_user:
             return RedirectResponse(_frontend_hash_url(f"/checkout?payment=failed&reference={reference}"), status_code=302)
 
+        if metadata.get("quickdrop_ride_id"):
+            ride = await _verify_and_update_paystack_ride(session, current_user, verified)
+            return RedirectResponse(_frontend_hash_url(f"/tracking/{ride.id}"), status_code=302)
+
         checkout_response = await _create_or_fetch_paystack_orders(session, current_user, verified)
         first_order = checkout_response.orders[0] if checkout_response.orders else None
         if not first_order:
@@ -348,6 +380,9 @@ async def paystack_webhook(
         return {"status": "ignored"}
 
     try:
+        if metadata.get("quickdrop_ride_id"):
+            await _verify_and_update_paystack_ride(session, current_user, data)
+            return {"status": "ok"}
         await _create_or_fetch_paystack_orders(session, current_user, data)
     except ValueError:
         return {"status": "ignored"}
@@ -384,6 +419,7 @@ async def get_order(
         order_reference=order.order_reference,
         status=order.status,
         tracking_note=order.tracking_note,
+        delivery_speed=order.delivery_speed,
         updated_at=order.updated_at,
         timeline=build_timeline(order.status),
         rider=order.rider,
@@ -437,6 +473,19 @@ async def update_vendor_order(
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    allowed_transitions = {
+        OrderStatus.pending: {OrderStatus.confirmed, OrderStatus.cancelled},
+        OrderStatus.confirmed: {OrderStatus.preparing, OrderStatus.cancelled},
+        OrderStatus.preparing: {OrderStatus.rider_assigned, OrderStatus.cancelled},
+    }
+    if payload.status == order.status:
+        raise HTTPException(status_code=400, detail="Order is already in that status")
+    if payload.status not in allowed_transitions.get(order.status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot change order from {order.status.value} to {payload.status.value}",
+        )
 
     previous_status = order.status
     order.status = payload.status
@@ -510,80 +559,81 @@ async def orders_ws(
     websocket: WebSocket,
     token: str = Query(...),
     order_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_session),
 ) -> None:
-    from app.db.session import AsyncSessionLocal
+    try:
+        payload = decode_access_token(token)
+    except ValueError:
+        await websocket.close(code=4401)
+        return
 
-    async with AsyncSessionLocal() as session:
-        try:
-            payload = decode_access_token(token)
-        except ValueError:
-            await websocket.close(code=4401)
-            return
+    identity_type = payload.get("type")
+    subject = payload.get("sub")
+    try:
+        actor_id = int(subject)
+    except (TypeError, ValueError):
+        await websocket.close(code=4401)
+        return
 
-        identity_type = payload.get("type")
-        subject = payload.get("sub")
-        try:
-            actor_id = int(subject)
-        except (TypeError, ValueError):
-            await websocket.close(code=4401)
-            return
-
-        order = await session.scalar(
-            select(Order)
-            .where(Order.id == order_id)
-            .options(
-                selectinload(Order.vendor),
-                selectinload(Order.user),
-                selectinload(Order.rider),
-                selectinload(Order.address),
-                selectinload(Order.items).selectinload(OrderItem.product),
-            )
+    order = await session.scalar(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(
+            selectinload(Order.vendor),
+            selectinload(Order.user),
+            selectinload(Order.rider),
+            selectinload(Order.address),
+            selectinload(Order.items).selectinload(OrderItem.product),
         )
-        if not order:
-            await websocket.close(code=4404)
-            return
+    )
+    if not order:
+        await websocket.close(code=4404)
+        return
 
-        if identity_type == "user" and order.user_id != actor_id:
-            await websocket.close(code=4403)
-            return
-        if identity_type == "rider" and order.rider_id != actor_id:
-            await websocket.close(code=4403)
-            return
-        if identity_type not in {"user", "rider", "admin"}:
-            await websocket.close(code=4403)
-            return
+    if identity_type == "user" and order.user_id != actor_id:
+        await websocket.close(code=4403)
+        return
+    if identity_type == "vendor" and order.vendor_id != actor_id:
+        await websocket.close(code=4403)
+        return
+    if identity_type == "rider" and order.rider_id != actor_id:
+        await websocket.close(code=4403)
+        return
+    if identity_type not in {"user", "vendor", "rider", "admin"}:
+        await websocket.close(code=4403)
+        return
 
-        connection_key = f"{identity_type}:{actor_id}:order:{order_id}"
-        connected = await order_realtime_manager.connect(str(order_id), websocket, connection_key)
-        if not connected:
-            return
+    connection_key = f"{identity_type}:{actor_id}:order:{order_id}"
+    connected = await order_realtime_manager.connect(str(order_id), websocket, connection_key)
+    if not connected:
+        return
 
-        bootstrap = await build_order_status_response(session, order_id)
-        if not bootstrap or not await _send_order_socket_payload(
-            websocket,
-            {"event": "order.bootstrap", "order": bootstrap.model_dump(mode="json")},
-        ):
-            order_realtime_manager.disconnect(websocket)
-            return
+    bootstrap = await build_order_status_response(session, order_id)
+    if not bootstrap or not await _send_order_socket_payload(
+        websocket,
+        {"event": "order.bootstrap", "order": bootstrap.model_dump(mode="json")},
+    ):
+        order_realtime_manager.disconnect(websocket)
+        return
 
-        try:
-            while True:
-                message = await websocket.receive()
-                message_type = message.get("type")
-                if message_type == "websocket.disconnect":
-                    break
-                if message_type != "websocket.receive":
-                    continue
-                payload_text = message.get("text")
-                if not payload_text:
-                    continue
-                try:
-                    data = json.loads(payload_text)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("type") == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-        except WebSocketDisconnect:
-            pass
-        finally:
-            order_realtime_manager.disconnect(websocket)
+    try:
+        while True:
+            message = await websocket.receive()
+            message_type = message.get("type")
+            if message_type == "websocket.disconnect":
+                break
+            if message_type != "websocket.receive":
+                continue
+            payload_text = message.get("text")
+            if not payload_text:
+                continue
+            try:
+                data = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        order_realtime_manager.disconnect(websocket)

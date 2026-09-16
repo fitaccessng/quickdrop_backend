@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -41,7 +42,7 @@ class RiderProfileUpdateRequest(BaseModel):
     po_box: Optional[str] = Field(default=None, max_length=50)
     vehicle_type: Optional[str] = Field(default=None, min_length=2, max_length=40)
     license_number: Optional[str] = Field(default=None, min_length=3, max_length=80)
-    rider_status: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    rider_status: Optional[Literal["offline", "available", "online", "delivering"]] = None
     current_latitude: Optional[float] = None
     current_longitude: Optional[float] = None
 

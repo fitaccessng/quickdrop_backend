@@ -18,6 +18,8 @@ from app.schemas.vendor import (
     VendorDetail,
     VendorPromotionCreateRequest,
     VendorPromotionResponse,
+    VendorPromotionStatusRequest,
+    VendorPromotionUpdateRequest,
     VendorPayoutSummaryResponse,
     VendorProfileResponse,
     VendorProfileUpdateRequest,
@@ -192,12 +194,18 @@ async def get_my_vendor_analytics(
     )
     orders = list(orders_result.scalars().all())
 
+    today = datetime.now(timezone.utc).date()
     total_revenue = float(sum(order.total_amount for order in orders))
+    daily_revenue = float(sum(order.total_amount for order in orders if order.created_at.date() == today))
     total_orders = len(orders)
     active_products = sum(1 for product in vendor.products if product.is_available)
+    total_products = len(vendor.products)
+    out_of_stock_products = sum(1 for product in vendor.products if product.stock_quantity <= 0)
     average_order_value = total_revenue / total_orders if total_orders else 0.0
     pending_orders = sum(1 for order in orders if order.status in {OrderStatus.pending, OrderStatus.confirmed, OrderStatus.preparing, OrderStatus.rider_assigned, OrderStatus.on_the_way})
+    active_orders = sum(1 for order in orders if order.status in {OrderStatus.confirmed, OrderStatus.preparing, OrderStatus.rider_assigned, OrderStatus.on_the_way})
     completed_orders = sum(1 for order in orders if order.status == OrderStatus.delivered)
+    cancelled_orders = sum(1 for order in orders if order.status == OrderStatus.cancelled)
 
     monthly_buckets: dict[str, float] = defaultdict(float)
     status_buckets: dict[str, int] = defaultdict(int)
@@ -219,8 +227,11 @@ async def get_my_vendor_analytics(
 
     return VendorAnalyticsResponse(
         total_revenue=total_revenue,
+        daily_revenue=daily_revenue,
         total_orders=total_orders,
         active_products=active_products,
+        total_products=total_products,
+        out_of_stock_products=out_of_stock_products,
     low_stock_count=sum(
         1
         for product in vendor.products
@@ -228,7 +239,9 @@ async def get_my_vendor_analytics(
     ),
         average_order_value=average_order_value,
         pending_orders=pending_orders,
+        active_orders=active_orders,
         completed_orders=completed_orders,
+        cancelled_orders=cancelled_orders,
         monthly_revenue=monthly_revenue,
         status_breakdown=status_breakdown,
         top_products=top_products,
@@ -271,6 +284,81 @@ async def create_my_vendor_promotion(
 
     promotion = VendorPromotion(vendor_id=current_vendor.id, status="pending", **payload.model_dump())
     session.add(promotion)
+    await session.commit()
+    promotion = await session.scalar(
+        select(VendorPromotion)
+        .where(VendorPromotion.id == promotion.id)
+        .options(selectinload(VendorPromotion.product))
+    )
+    return promotion
+
+
+async def _get_owned_promotion(
+    promotion_id: int,
+    session: AsyncSession,
+    current_vendor: Vendor,
+) -> VendorPromotion:
+    promotion = await session.scalar(
+        select(VendorPromotion)
+        .where(VendorPromotion.id == promotion_id, VendorPromotion.vendor_id == current_vendor.id)
+        .options(selectinload(VendorPromotion.product))
+    )
+    if not promotion:
+        raise HTTPException(status_code=404, detail="Promotion not found")
+    return promotion
+
+
+@router.patch("/me/promotions/{promotion_id}/status", response_model=VendorPromotionResponse)
+async def update_my_vendor_promotion_status(
+    promotion_id: int,
+    payload: VendorPromotionStatusRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_vendor: Vendor = Depends(get_current_vendor),
+) -> VendorPromotionResponse:
+    promotion = await _get_owned_promotion(promotion_id, session, current_vendor)
+    allowed_transitions = {
+        "approved": {"active", "inactive"},
+        "active": {"inactive"},
+        "inactive": {"active"},
+        "rejected": {"inactive"},
+    }
+    if payload.status not in allowed_transitions.get(promotion.status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot change promotion from {promotion.status} to {payload.status}",
+        )
+    promotion.status = payload.status
+    await session.commit()
+    await session.refresh(promotion)
+    return promotion
+
+
+@router.patch("/me/promotions/{promotion_id}", response_model=VendorPromotionResponse)
+async def update_my_vendor_promotion(
+    promotion_id: int,
+    payload: VendorPromotionUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_vendor: Vendor = Depends(get_current_vendor),
+) -> VendorPromotionResponse:
+    promotion = await _get_owned_promotion(promotion_id, session, current_vendor)
+    if promotion.status not in {"pending", "rejected", "inactive"}:
+        raise HTTPException(status_code=409, detail="Only pending, rejected, or inactive promotions can be edited")
+
+    values = payload.model_dump(exclude_unset=True)
+    starts_at = values.get("starts_at", promotion.starts_at)
+    ends_at = values.get("ends_at", promotion.ends_at)
+    if ends_at and starts_at and ends_at < starts_at:
+        raise HTTPException(status_code=400, detail="Promotion end date must be after the start date")
+
+    if "product_id" in values and values["product_id"] is not None:
+        product = await session.scalar(
+            select(Product).where(Product.id == values["product_id"], Product.vendor_id == current_vendor.id)
+        )
+        if not product:
+            raise HTTPException(status_code=404, detail="Selected product was not found in your catalog")
+
+    for field, value in values.items():
+        setattr(promotion, field, value)
     await session.commit()
     await session.refresh(promotion)
     return promotion

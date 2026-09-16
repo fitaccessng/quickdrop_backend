@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_user, get_current_vendor, get_db_session
+from app.api.deps import get_current_user, get_current_vendor, get_db_session, get_optional_current_vendor
 from app.models.product import Product, ProductReview
 from app.models.user import User
 from app.models.vendor import Vendor
@@ -52,8 +52,13 @@ async def list_products(
     category: Optional[str] = None,
     include_unavailable: bool = False,
     session: AsyncSession = Depends(get_db_session),
+    current_vendor: Optional[Vendor] = Depends(get_optional_current_vendor),
 ) -> list[ProductSummary]:
     query = select(Product).options(selectinload(Product.reviews))
+    if include_unavailable:
+        if not current_vendor:
+            raise HTTPException(status_code=401, detail="Vendor authentication required")
+        vendor_id = current_vendor.id
     if not include_unavailable:
         query = query.where(Product.is_available.is_(True))
     if vendor_id:
