@@ -283,3 +283,6 @@ async def serve_frontend(full_path: str):
         raise HTTPException(status_code=404, detail="Not found")
 
     return FileResponse(CLIENT_DIST_DIR / "index.html")
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
