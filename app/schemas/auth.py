@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -16,7 +16,7 @@ class UnifiedSignupRequest(BaseModel):
     email: EmailStr
     phone: Optional[str] = Field(default=None, max_length=30)
     password: str = Field(min_length=8, max_length=128)
-    role: str = Field(default="customer")  # customer, vendor, rider
+    role: Literal["customer", "rider", "vendor"] = Field(default="customer")
     # For vendors
     business_name: Optional[str] = Field(default=None, min_length=5, max_length=160)
     category: Optional[str] = Field(default=None, min_length=2, max_length=80)

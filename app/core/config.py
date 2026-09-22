@@ -44,6 +44,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "https://usequickdrop.online",
         "https://www.usequickdrop.online",
+        "https://quickdrop.online",
+        "https://www.quickdrop.online",
     ]
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 

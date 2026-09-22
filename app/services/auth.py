@@ -55,8 +55,10 @@ async def register_unified(session: AsyncSession, payload) -> tuple[str, Union[U
     Unified registration for customers, vendors, and riders.
     Returns (role, user_or_vendor) tuple
     """
-    role = payload.role.lower()
-    
+    role = payload.role.strip().lower()
+    if role not in {"customer", "rider", "vendor"}:
+        raise ValueError("Invalid role selected")
+
     if role == "vendor":
         # Register as vendor
         existing = await session.scalar(select(Vendor).where(Vendor.email == payload.email.lower()))
