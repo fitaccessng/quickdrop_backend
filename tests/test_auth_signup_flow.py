@@ -49,3 +49,42 @@ async def test_unified_signup_rejects_invalid_role(auth_signup_test_context):
 
     assert response.status_code == 422
     assert "role" in response.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_signup_preflight_allows_production_frontend(auth_signup_test_context):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.options(
+            "/auth/unified-signup",
+            headers={
+                "Origin": "https://www.quickdrop.online",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,authorization",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://www.quickdrop.online"
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "Authorization" in response.headers["access-control-allow-headers"]
+
+
+@pytest.mark.asyncio
+async def test_signup_validation_error_keeps_cors_headers(auth_signup_test_context):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/auth/unified-signup",
+            headers={"Origin": "https://www.quickdrop.online"},
+            json={
+                "full_name": "Invalid Signup",
+                "email": "invalid-signup@example.com",
+                "phone": "123456789",
+                "password": "Password123",
+                "role": "invalid",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.headers["access-control-allow-origin"] == "https://www.quickdrop.online"
+    assert response.headers["access-control-allow-credentials"] == "true"
