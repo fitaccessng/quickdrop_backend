@@ -52,6 +52,33 @@ async def test_unified_signup_rejects_invalid_role(auth_signup_test_context):
 
 
 @pytest.mark.asyncio
+async def test_admin_signup_and_login(auth_signup_test_context):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        signup_response = await client.post(
+            "/auth/unified-signup",
+            json={
+                "full_name": "Platform Admin",
+                "email": "platform-admin@example.com",
+                "phone": "123456789",
+                "password": "Password123",
+                "role": "admin",
+            },
+        )
+        login_response = await client.post(
+            "/auth/unified-login",
+            json={
+                "email": "platform-admin@example.com",
+                "password": "Password123",
+            },
+        )
+
+    assert signup_response.status_code == 201
+    assert signup_response.json()["account_type"] == "admin"
+    assert login_response.status_code == 200
+    assert login_response.json()["account_type"] == "admin"
+
+
+@pytest.mark.asyncio
 async def test_signup_preflight_allows_production_frontend(auth_signup_test_context):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.options(

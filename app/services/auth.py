@@ -56,7 +56,7 @@ async def register_unified(session: AsyncSession, payload) -> tuple[str, Union[U
     Returns (role, user_or_vendor) tuple
     """
     role = payload.role.strip().lower()
-    if role not in {"customer", "rider", "vendor"}:
+    if role not in {"customer", "rider", "vendor", "admin"}:
         raise ValueError("Invalid role selected")
 
     if role == "vendor":
