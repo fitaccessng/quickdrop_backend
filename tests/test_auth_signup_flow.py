@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db_session
+from app.core.config import settings
 from app.db.session import Base
 from app.main import app
+from app.schemas.auth import GoogleOAuthUser
 
 
 @pytest_asyncio.fixture
@@ -115,3 +117,37 @@ async def test_signup_validation_error_keeps_cors_headers(auth_signup_test_conte
     assert response.status_code == 422
     assert response.headers["access-control-allow-origin"] == "https://www.quickdrop.online"
     assert response.headers["access-control-allow-credentials"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_google_signup_prompts_for_role_then_creates_selected_account(
+    auth_signup_test_context, monkeypatch
+):
+    async def validate_google_token(token, client_id):
+        assert token == "valid-google-id-token"
+        assert client_id == "test-google-client-id"
+        return GoogleOAuthUser(
+            id="google-user-123",
+            email="google-rider@example.com",
+            name="Google Rider",
+        )
+
+    monkeypatch.setattr(settings, "google_client_id", "test-google-client-id")
+    monkeypatch.setattr("app.api.auth.validate_google_token", validate_google_token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        role_prompt = await client.post(
+            "/auth/oauth/google",
+            json={"token": "valid-google-id-token"},
+        )
+        signup = await client.post(
+            "/auth/oauth/google",
+            json={"token": "valid-google-id-token", "role": "rider"},
+        )
+
+    assert role_prompt.status_code == 200
+    assert role_prompt.json()["requires_role_selection"] is True
+    assert role_prompt.json()["access_token"] is None
+    assert signup.status_code == 200
+    assert signup.json()["account_type"] == "rider"
+    assert signup.json()["user"]["role"] == "rider"

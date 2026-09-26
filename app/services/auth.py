@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Union
+from typing import Optional, Union
 import jwt
 
 from sqlalchemy import select
@@ -384,6 +384,57 @@ async def get_or_create_user_from_google(session: AsyncSession, google_user: Goo
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def resolve_google_account(
+    session: AsyncSession, google_user: GoogleOAuthUser, role: Optional[str] = None
+) -> tuple[Optional[str], Optional[Union[User, Vendor]], bool]:
+    email = google_user.email.lower()
+    vendor = await session.scalar(select(Vendor).where(Vendor.email == email))
+    if vendor:
+        return "vendor", vendor, False
+
+    user = await session.scalar(select(User).where(User.email == email))
+    if user:
+        account_type = "admin" if user.role == "admin" else "rider" if user.role == "rider" else "user"
+        return account_type, user, False
+
+    if role is None:
+        return None, None, True
+    if role not in {"customer", "rider", "vendor"}:
+        raise ValueError("Invalid role selected")
+
+    random_password = hash_password(uuid4().hex)
+    if role == "vendor":
+        business_name = google_user.name.strip() or email.split("@", 1)[0]
+        vendor = Vendor(
+            name=business_name[:160],
+            slug=await build_unique_vendor_slug(session, business_name),
+            email=email,
+            hashed_password=random_password,
+            category="Others",
+            description="Complete onboarding to publish your storefront.",
+            city="Johannesburg",
+            is_active=True,
+            is_onboarded=False,
+        )
+        session.add(vendor)
+        await session.commit()
+        await session.refresh(vendor)
+        return "vendor", vendor, False
+
+    user = User(
+        full_name=google_user.name or "User",
+        email=email,
+        hashed_password=random_password,
+        role=role,
+        avatar_url=google_user.picture,
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return ("rider" if role == "rider" else "user"), user, False
 
 
 async def get_or_create_user_from_apple(session: AsyncSession, apple_user: AppleOAuthUser) -> User:

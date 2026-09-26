@@ -173,6 +173,15 @@ class VendorForgotPasswordResponse(BaseModel):
 # OAuth Request Schemas
 class GoogleOAuthRequest(BaseModel):
     token: str = Field(min_length=10, max_length=2000, description="Google ID token")
+    role: Optional[Literal["customer", "rider", "vendor"]] = None
+
+
+class GoogleOAuthResponse(BaseModel):
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    account_type: Optional[str] = None
+    requires_role_selection: bool = False
+    user: Optional[UnifiedAuthUser] = None
 
 
 class AppleOAuthRequest(BaseModel):

@@ -122,6 +122,10 @@ SQLITE_MIGRATIONS = {
     "delivery_settings": {},
 }
 
+SQLITE_MIGRATIONS["service_categories"] = {
+    "image_url": "ALTER TABLE service_categories ADD COLUMN image_url VARCHAR(5000000)",
+}
+
 SQLITE_MIGRATIONS["delivery_settings"] = {
     "base_fare": "ALTER TABLE delivery_settings ADD COLUMN base_fare FLOAT NOT NULL DEFAULT 0",
     "per_km": "ALTER TABLE delivery_settings ADD COLUMN per_km FLOAT NOT NULL DEFAULT 0",
@@ -195,6 +199,10 @@ async def lifespan(_: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         if engine.url.get_backend_name() == "sqlite":
             await conn.run_sync(_ensure_sqlite_columns)
+        elif engine.url.get_backend_name() == "postgresql":
+            await conn.exec_driver_sql(
+                "ALTER TABLE service_categories ADD COLUMN IF NOT EXISTS image_url VARCHAR(5000000)"
+            )
     yield
 
 

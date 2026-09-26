@@ -81,6 +81,7 @@ async def list_service_category_overview(
             name=category.name,
             slug=category.slug,
             description=category.description,
+            image_url=category.image_url,
             is_active=category.is_active,
             product_count=product_counts.get(category.slug, 0),
         )
@@ -132,7 +133,13 @@ async def create_service_category(
     existing = await session.scalar(select(ServiceCategory).where(ServiceCategory.slug == slug))
     if existing:
         raise HTTPException(status_code=409, detail="Service category already exists")
-    category = ServiceCategory(name=name, slug=slug, description=payload.description, is_active=payload.is_active)
+    category = ServiceCategory(
+        name=name,
+        slug=slug,
+        description=payload.description,
+        image_url=payload.image_url,
+        is_active=payload.is_active,
+    )
     session.add(category)
     await session.commit()
     await session.refresh(category)

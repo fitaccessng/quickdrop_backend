@@ -226,6 +226,7 @@ class ServiceCategoryResponse(BaseModel):
     name: str
     slug: str
     description: Optional[str] = None
+    image_url: Optional[str] = None
     is_active: bool
 
     class Config:
@@ -239,12 +240,14 @@ class ServiceCategoryOverviewResponse(ServiceCategoryResponse):
 class ServiceCategoryCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    image_url: Optional[str] = None
     is_active: bool = True
 
 
 class ServiceCategoryUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    image_url: Optional[str] = None
     is_active: Optional[bool] = None
 
 

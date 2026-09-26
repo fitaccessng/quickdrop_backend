@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import os
 
 from app.api.deps import get_current_vendor, get_db_session
+from app.core.config import settings
 from app.core.security import create_access_token
 from app.models.vendor import Vendor
 from app.schemas.auth import (
@@ -23,6 +24,7 @@ from app.schemas.auth import (
     VendorResetPasswordRequest,
     ResetPasswordRequest,
     GoogleOAuthRequest,
+    GoogleOAuthResponse,
     AppleOAuthRequest,
 )
 from app.services.auth import (
@@ -39,8 +41,8 @@ from app.services.auth import (
     reset_vendor_password,
     validate_google_token,
     validate_apple_token,
-    get_or_create_user_from_google,
     get_or_create_user_from_apple,
+    resolve_google_account,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -203,11 +205,11 @@ async def vendor_onboarding(
 # ============================================
 
 
-@router.post("/oauth/google", response_model=AuthResponse)
+@router.post("/oauth/google", response_model=GoogleOAuthResponse)
 async def google_oauth(
     payload: GoogleOAuthRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> AuthResponse:
+) -> GoogleOAuthResponse:
     """
     Google OAuth endpoint.
     
@@ -225,35 +227,30 @@ async def google_oauth(
         HTTPException 401: If token validation fails
     """
     try:
-        # Get Google Client ID from environment
-        google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+        google_client_id = settings.google_client_id
         if not google_client_id:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Google OAuth not configured",
             )
-        
-        # Validate Google token
+
         google_user = await validate_google_token(payload.token, google_client_id)
-        
-        # Get or create user
-        user = await get_or_create_user_from_google(session, google_user)
-        
-        # Return JWT token and user data
-        return AuthResponse(
-            access_token=create_access_token(str(user.id), "user"),
-            user=user,
+        account_type, account, requires_role_selection = await resolve_google_account(
+            session, google_user, payload.role
         )
-    
+        if requires_role_selection:
+            return GoogleOAuthResponse(requires_role_selection=True)
+
+        token_type = account_type or "user"
+        return GoogleOAuthResponse(
+            access_token=create_access_token(str(account.id), token_type),
+            account_type=token_type,
+            user=UnifiedAuthUser.from_orm(account),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google authentication failed",
         ) from exc
 
 
